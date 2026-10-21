@@ -862,6 +862,9 @@ from . import ai_brief as ai_brief_module  # B 线：AI 速览模块初始化与
 ai_brief_module.init()
 app.include_router(ai_brief_module.router)
 
+from . import ai_settings
+app.include_router(ai_settings.router)
+
 from . import pdf_guide
 pdf_guide.init()
 app.include_router(pdf_guide.router)

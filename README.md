@@ -35,9 +35,13 @@ python -m app.main
 
 ## 配置 AI
 
-把 `ai_config.example.json` 复制为 `ai_config.local.json`，在自己电脑上填写模型密钥；该文件已被 Git 忽略。默认接入浙江大学模型网关。也可以通过 `PAPERNET_AI_CONFIG_FILE` 指定配置文件，通过 `PAPERNET_LLM_API_KEY` 提供密钥。
+打开网页左侧 **数据与设置 → AI 辅助阅读**：
 
-模型请求由用户点击触发。摘要速览发送题名和摘要；全文解读发送对应论文的 PDF 提取文本。离线模式不产生模型请求，已保存结果仍可查看。请仅处理自己有权使用和传输的文献。
+1. 选择模型服务。
+2. 填写模型名称，粘贴 API 密钥。
+3. 点击 **保存并启用**。
+
+使用其他支持的接口时，填入服务商提供的地址即可。配置好后，打开论文选择 **AI 速览** 或 **AI 全文解读**；已有结果可以直接查看。
 
 ## 使用全文解读
 
@@ -51,10 +55,6 @@ Zotero 附件定位只查询临时数据库副本。读取全文不修改 Zotero
 ## 演示案例
 
 Gao et al., *High frame rate ultrasonic flowmeter based on PMUT array with bidirectional acoustic beams*, Microsystems & Nanoengineering (2025). DOI: [10.1038/s41378-025-01096-x](https://doi.org/10.1038/s41378-025-01096-x)。
-
-该论文在原 Zotero 条目中也曾使用 “Development of a high frame rate bidirectional ultrasonic flowmeter based on beamforming using pMUT arrays” 这一题名；通过 DOI 确认身份。
-
-仓库不包含个人文献库、论文 PDF、运行数据库、模型密钥或个人申报信息。
 
 ## 许可
 

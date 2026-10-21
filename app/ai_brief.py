@@ -63,6 +63,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from .db import get_db, get_bool_setting
+from .config import DATA_DIR
 
 # 已有内容复用接口（接口与分工 §3.1，B 线提供 app/library_source.py）。
 # 防御性导入：模块/函数缺失或导入期任何错误 → 降级为「不标注复用」，
@@ -82,7 +83,7 @@ ENRICH_FIELD_PROMPT_VERSION = "enrich_field_v1"
 # 回退到项目根目录的 ai_config.local.json（不存在则 not_configured）。
 DEFAULT_CONFIG_FILE = Path(__file__).resolve().parent.parent / "ai_config.local.json"
 DEFAULT_REQUEST_MODEL = "deepseek-v4-flash-780k-local"
-ALLOWED_LLM_HOSTS = {"modelgateway.zju.edu.cn"}
+ALLOWED_LLM_HOSTS = {"modelgateway.zju.edu.cn", "api.deepseek.com", "api.openai.com"}
 LLM_TIMEOUT = (15, 300)  # (连接, 读取) 秒；本地大上下文模型生成较慢，读取上限放宽
 _MAX_TEXT = 4000  # 单字段输出长度上限，防止异常超长输出
 
@@ -123,6 +124,9 @@ class LLMServiceError(Exception):
 # ------------------------------------------------------------------ 配置
 
 def _config_path() -> Path:
+    saved = DATA_DIR / "private" / "ai_config.local.json"
+    if saved.is_file():
+        return saved
     return Path(os.environ.get("PAPERNET_AI_CONFIG_FILE") or DEFAULT_CONFIG_FILE)
 
 
