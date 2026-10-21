@@ -341,3 +341,5 @@ dialog.detail-dialog::backdrop{background:transparent}
   .detail-tabs button{font-size:12px}
   .detail-dialog h2{font-size:16px}
 }
+
+.graph-color-control{display:flex;align-items:center;gap:8px;font-size:12px;color:#aebfd4;white-space:nowrap;margin-right:14px}.graph-color-control select{min-width:128px;height:30px;border:1px solid #354a65;border-radius:6px;background:#132339;color:#d9e7f7;padding:2px 9px;font-size:12px}.graph-gradient{width:88px!important;height:8px!important;border-radius:6px;background:linear-gradient(90deg,#284c83,#53a6cc,#a0f0db)!important}.graph-unknown{background:#68778a!important}.graph-legend{flex-wrap:wrap;max-width:calc(100% - 90px);pointer-events:none}.graph-legend b{font-size:12px;font-weight:500;color:#c6d9ed}
