@@ -1,0 +1,63 @@
+/* AI 速览面板（B 线独立样式，全部使用 wnai- 前缀，不影响宿主页面）
+ * A 线 v06 视觉改版：深色主题，与工作台 workspace.css 同一套色彩规范。
+ * 状态徽标（缓存/过期/未核验）保持高对比可见，不因视觉干净被隐藏。 */
+.wnai-overlay{position:fixed;inset:0;background:rgba(4,9,17,.66);z-index:9998;
+  display:flex;align-items:center;justify-content:center;padding:24px;}
+.wnai-overlay[hidden]{display:none;}
+.wnai-dialog{background:#151f30;border-radius:12px;max-width:880px;width:100%;
+  max-height:88vh;overflow:auto;box-shadow:0 18px 60px rgba(0,0,0,.55);
+  border:1px solid #2a3950;font-family:inherit;color:#e8eef6;}
+.wnai-header{display:flex;align-items:center;justify-content:space-between;
+  padding:14px 22px;border-bottom:1px solid #2a3950;position:sticky;top:0;
+  background:#151f30;z-index:2;}
+.wnai-header h2{margin:0;font-size:16px;font-weight:650;}
+.wnai-close{border:none;background:none;font-size:20px;cursor:pointer;color:#8b9aab;padding:4px 10px;}
+.wnai-close:hover{color:#e8eef6;}
+/* AI 生成警示横幅：保留醒目，但用暖琥珀而非炫光 */
+.wnai-banner{margin:14px 22px 0;padding:10px 14px;border-radius:8px;
+  background:#332a17;border:1px solid #5c4a20;color:#e2c184;font-weight:600;font-size:13px;}
+.wnai-status{margin:10px 22px 0;font-size:13px;color:#b7c3d2;display:flex;gap:8px;flex-wrap:wrap;align-items:center;}
+.wnai-badge{display:inline-block;padding:1px 9px;border-radius:10px;font-size:12px;font-weight:600;}
+.wnai-badge.cached{background:#1c3450;color:#9cc3ea;}
+.wnai-badge.fresh{background:#173325;color:#7ed0a0;}
+.wnai-badge.stale{background:#3b2020;color:#eda39a;}
+.wnai-error{margin:10px 22px 0;padding:10px 14px;border-radius:8px;background:#3b2020;
+  border:1px solid #6e3535;color:#f2c1ba;font-size:13px;white-space:pre-wrap;}
+.wnai-body{padding:6px 22px 22px;}
+.wnai-section{margin-top:16px;}
+.wnai-section h3{font-size:14px;margin:0 0 8px;color:#8fd8cb;}
+.wnai-paper-title{font-size:15.5px;font-weight:650;margin:0 0 4px;color:#e8eef6;}
+.wnai-abstract{background:#0e1726;border:1px solid #2a3950;border-radius:8px;
+  padding:12px 14px;font-size:13.5px;line-height:1.75;white-space:pre-wrap;word-break:break-word;color:#c9d5e3;}
+.wnai-mark{background:#6b5416;color:#ffe9a8;border-radius:3px;padding:0 1px;}
+.wnai-gen{margin-top:16px;padding:12px 14px;border:1px dashed #3a4c68;border-radius:8px;background:#111b2b;}
+.wnai-gen p{margin:0 0 8px;font-size:13px;color:#b7c3d2;}
+.wnai-gen button{background:#2f6fdb;color:#fff;border:none;border-radius:6px;
+  padding:8px 18px;font-size:14px;cursor:pointer;font-weight:600;}
+.wnai-gen button:hover{background:#3f7de8;}
+.wnai-gen button:disabled{background:#2a3a55;cursor:not-allowed;}
+.wnai-force{font-size:12.5px;color:#b7c3d2;margin-left:12px;display:inline-flex;flex-direction:row;align-items:center;gap:5px;}
+.wnai-biling{display:grid;gap:8px;}
+.wnai-kv{display:flex;gap:8px;align-items:baseline;}
+.wnai-kind{flex:none;font-size:11.5px;font-weight:700;color:#9cc3ea;background:#1c3450;
+  border-radius:5px;padding:1px 7px;}
+.wnai-elem{border:1px solid #2a3950;border-radius:8px;padding:11px 14px;margin-top:9px;background:#111b2b;}
+.wnai-elem h4{margin:0 0 6px;font-size:13.5px;color:#e8eef6;}
+.wnai-elem p{margin:0;}
+.wnai-elem .wnai-en{color:#8b9aab;font-size:13px;margin-top:3px;line-height:1.65;}
+.wnai-quote{margin-top:8px;font-size:12.5px;background:#12302e;border-left:3px solid #3ab5a3;
+  padding:6px 10px;border-radius:0 6px 6px 0;line-height:1.6;color:#c9d5e3;}
+.wnai-quote button{border:none;background:none;color:#5fa8e8;cursor:pointer;
+  font-size:12px;padding:0 0 0 8px;text-decoration:underline;}
+.wnai-noquote{margin-top:8px;font-size:12.5px;color:#e2c184;}
+.wnai-warning{margin-top:10px;font-size:12.5px;color:#e2c184;background:#332a17;
+  border:1px solid #5c4a20;border-radius:7px;padding:7px 10px;}
+.wnai-muted{color:#8b9aab;font-size:13px;}
+.wnai-meta{margin-top:14px;font-size:12px;color:#8b9aab;line-height:1.7;}
+/* C 线 parallel_v03：来源分区与复用来源标注 */
+.wnai-field{margin-top:12px;}
+.wnai-field-label{display:block;font-size:11px;font-weight:700;color:#8b9aab;margin-bottom:4px;}
+.wnai-title-zh{font-size:14px;font-weight:500;color:#b7c3d2;}
+.wnai-abstract-zh{background:#12302e;border-color:#275a52;}
+.wnai-origin{display:inline-block;font-size:11px;font-weight:600;color:#8fd8cb;background:#12302e;border:1px solid #275a52;border-radius:10px;padding:1px 9px;margin-left:6px;vertical-align:middle;}
+.wnai-existing{border:1px dashed #3a4c68;border-radius:8px;padding:10px 12px;background:#111b2b;}

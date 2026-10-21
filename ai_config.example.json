@@ -1,0 +1,7 @@
+{
+  "llm": {
+    "base_url": "https://modelgateway.zju.edu.cn/v1",
+    "model": "deepseek-v4-flash-780k-local",
+    "api_key": ""
+  }
+}

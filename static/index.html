@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>文献罗盘 · 本地文献图谱与智能发现</title>
+<link rel="icon" type="image/png" sizes="32x32" href="/brand/favicon-32.png"><link rel="shortcut icon" href="/favicon.ico"><link rel="stylesheet" href="style.css?v=0.2.0">
+<script src="vendor/cytoscape.min.js"></script>
+</head>
+<body>
+<header id="topbar">
+  <div class="brand">文献罗盘 <span class="sub">本地文献图谱与智能发现</span></div>
+  <input id="global-search" type="search" placeholder="搜索标题 / DOI…">
+  <div id="health" class="health">…</div>
+</header>
+
+<div id="layout">
+  <nav id="sidenav">
+    <button class="nav-btn active" data-view="graph"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.4"/><path d="M10 3v14M3 10h14M5.3 5.3l9.4 9.4M14.7 5.3l-9.4 9.4"/></svg><span>图谱</span></button>
+    <button class="nav-btn" data-view="library"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3.5 4h4v12h-4zM9.5 4h4v12h-4z"/><path d="M15.2 4.6l2.2 11-1.9.4-2.2-11z"/></svg><span>文献库</span></button>
+    <button class="nav-btn" data-view="collections"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5.5h5l1.5 2H17v8H3z"/></svg><span>收藏集</span></button>
+    <button class="nav-btn" data-view="import"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9M6.5 8.5 10 12l3.5-3.5M4 15.5h12"/></svg><span>导入</span></button>
+    <button class="nav-btn" data-view="database"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3.5" width="14" height="5.4" rx="1"/><rect x="3" y="11.1" width="14" height="5.4" rx="1"/><path d="M6 6.2h.01M6 13.8h.01"/></svg><span>数据库</span></button>
+    <button class="nav-btn" data-view="settings"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6"/><path d="M10 2.8v2.4M10 14.8v2.4M2.8 10h2.4M14.8 10h2.4M4.9 4.9l1.7 1.7M13.4 13.4l1.7 1.7M15.1 4.9l-1.7 1.7M6.6 13.4l-1.7 1.7"/></svg><span>设置</span></button>
+    <div id="sidenav-resizer" title="拖动调整宽度"></div>
+  </nav>
+
+  <main id="main">
+    <!-- 图谱视图 -->
+    <section id="view-graph" class="view active">
+      <div id="graph-toolbar">
+        <button id="btn-build" class="primary" title="为库内文献抓取引用边并缓存到本地"><svg class="nav-ico" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7"/><circle cx="10" cy="10" r="3.4"/><path d="M10 3v14M3 10h14M5.3 5.3l9.4 9.4M14.7 5.3l-9.4 9.4"/></svg> 构建网络</button>
+        <button id="btn-relayout">重新布局</button>
+        <button id="btn-fit">适应窗口</button>
+        <label class="chk"><input type="checkbox" id="chk-candidates"> 显示候选文献</label>
+        <label>着色
+          <select id="sel-color">
+            <option value="cluster">聚类社区</option>
+            <option value="year">年份</option>
+            <option value="status">库内/候选</option>
+          </select>
+        </label>
+        <label>年份 <input id="year-min" type="number" style="width:62px" placeholder="从">
+          – <input id="year-max" type="number" style="width:62px" placeholder="到"></label>
+        <input id="graph-search" type="search" placeholder="在图中查找…" style="width:150px">
+        <span class="spacer"></span>
+        <button id="btn-png">导出 PNG</button>
+        <button id="btn-graphml">GraphML</button>
+      </div>
+      <div id="build-progress" class="progress hidden"><div id="build-bar"></div><span id="build-text"></span></div>
+      <div id="graph-wrap">
+        <div id="cy"></div>
+        <div id="detail-resizer" title="拖动调整宽度"></div>
+        <aside id="detail" class="hidden">
+          <button id="detail-close">×</button>
+          <div id="detail-body"></div>
+        </aside>
+      </div>
+      <div id="graph-stats" class="muted"></div>
+    </section>
+
+    <!-- 文献库视图 -->
+    <section id="view-library" class="view">
+      <div class="toolbar">
+        <input id="lib-search" type="search" placeholder="搜索标题 / DOI…">
+        <select id="lib-status">
+          <option value="">全部</option>
+          <option value="library">库内</option>
+          <option value="candidate">候选</option>
+        </select>
+        <button id="btn-lib-fetch" class="primary" title="为所选文献抓取引用边">抓取所选引用</button>
+        <button id="btn-lib-enrich" title="按 DOI 联网补全候选文献缺失的年份/期刊/摘要/作者">补全缺失信息</button>
+        <select id="lib-collect"><option value="">加入收藏集…</option></select>
+        <button id="btn-promote">转入库内</button>
+        <button id="btn-lib-del" class="danger" title="只删除文献罗盘自己的记录，绝不动你的原 PDF 文件">删除记录</button>
+        <span class="spacer"></span>
+        <button id="lib-prev">←</button>
+        <span id="lib-count" class="muted"></span>
+        <button id="lib-next">→</button>
+      </div>
+      <table id="lib-table">
+        <thead><tr>
+          <th style="width:28px"><input type="checkbox" id="lib-checkall"></th>
+          <th>标题</th><th>作者</th><th style="width:60px">年份</th>
+          <th>期刊</th><th style="width:70px">被引</th><th style="width:70px">状态</th>
+          <th style="width:44px">PDF</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <!-- 收藏集视图 -->
+    <section id="view-collections" class="view">
+      <div class="toolbar">
+        <input id="col-name" placeholder="新收藏集名称（类似 ResearchRabbit 的 Collection）">
+        <button id="btn-col-create" class="primary">创建</button>
+      </div>
+      <div id="col-list"></div>
+      <p class="muted hint">在「文献库」里勾选文献即可加入收藏集；点收藏集的「查看图谱」只显示该集合的网络。</p>
+    </section>
+
+    <!-- 导入视图 -->
+    <section id="view-import" class="view">
+      <div class="cards">
+        <div class="card">
+          <h3>① 粘贴 DOI / arXiv DOI</h3>
+          <textarea id="imp-doi" placeholder="每行一个，例如：
+10.48550/arXiv.1706.03762
+10.18653/v1/N19-1423"></textarea>
+          <button id="btn-imp-doi" class="primary">导入（联网匹配元数据）</button>
+        </div>
+        <div class="card">
+          <h3>② BibTeX</h3>
+          <textarea id="imp-bib" placeholder="粘贴 .bib 内容，或选择文件…"></textarea>
+          <input type="file" id="imp-bib-file" accept=".bib,.bibtex" class="fileinput">
+          <button id="btn-imp-bib" class="primary">导入</button>
+        </div>
+        <div class="card">
+          <h3>③ RIS</h3>
+          <textarea id="imp-ris" placeholder="粘贴 .ris 内容，或选择文件…"></textarea>
+          <input type="file" id="imp-ris-file" accept=".ris" class="fileinput">
+          <button id="btn-imp-ris" class="primary">导入</button>
+        </div>
+        <div class="card">
+          <h3>④ 本地 PDF 文件夹</h3>
+          <input id="imp-pdf" type="text" placeholder="例如 D:\literature\papers">
+          <button id="btn-imp-pdf" class="primary">扫描导入</button>
+          <p class="muted">自动提取 PDF 内嵌 DOI / 标题并匹配 OpenAlex；<b>只读取</b>你的 PDF，绝不修改或删除。</p>
+        </div>
+        <div class="card wide">
+          <h3>⑥ 标准数据表导入（自采集 JSONL，支持纯中文文献）</h3>
+          <p class="muted">按 <a href="/docs/数据采集清单.md" target="_blank">docs/数据采集清单.md</a> 的字段规范逐条采集，存成 papers.jsonl（一行一篇）和 citations.jsonl（一行一条引用边 {"citing":"DOI","cited":"DOI"}），UTF-8 编码。引用两端也接受与 papers 一致的标题。</p>
+          <label class="muted">papers.jsonl（文献表）</label>
+          <textarea id="imp-std-papers" placeholder='{"doi":"10.1234/abc","title":"English Title","title_zh":"中文标题","authors":"张三; 李四","year":2024,"venue":"仪器仪表学报","abstract_zh":"中文摘要…","abstract":"English abstract…","references":["10.5678/def"]}'></textarea>
+          <input type="file" id="imp-std-papers-file" accept=".jsonl,.json,.txt" class="fileinput">
+          <label class="muted">citations.jsonl（引用边表，可选）</label>
+          <textarea id="imp-std-citations" placeholder='{"citing":"10.1234/abc","cited":"10.5678/def"}'></textarea>
+          <input type="file" id="imp-std-citations-file" accept=".jsonl,.json,.txt" class="fileinput">
+          <label class="muted">venues.jsonl（期刊/会议等级表，可选）</label>
+          <textarea id="imp-std-venues" placeholder='{"name":"Nature","kind":"journal","impact_factor":"50.5","jcr_zone":"Q1","cas_zone":"1区","cas_top":"是","cas_sub":"综合性期刊 1区","ccf_tier":null,"source":"easyscholar"}
+{"name":"CVPR","kind":"conference","ccf_tier":"CCF-A","source":"CCF推荐目录"}'></textarea>
+          <input type="file" id="imp-std-venues-file" accept=".jsonl,.json,.txt" class="fileinput">
+          <button id="btn-imp-std" class="primary">导入标准数据表</button>
+        </div>
+        <div class="card wide">
+          <h3>⑤ Zotero 本地库同步（只读）</h3>
+          <p class="muted">需要 Zotero 7 正在运行，并在设置中启用 Zotero 集成。只读取条目与 PDF 路径，不写入 Zotero。选分类时含其全部子分类。</p>
+          <div class="toolbar" style="padding:0;border:none;background:none">
+            <select id="zot-collection"><option value="">整个文库</option></select>
+            <button id="btn-zot-load">载入分类列表</button>
+            <button id="btn-imp-zotero" class="primary">开始同步</button>
+          </div>
+        </div>
+      </div>
+      <pre id="import-log" class="log hidden"></pre>
+    </section>
+
+    <!-- 数据库视图 -->
+    <section id="view-database" class="view">
+      <div class="toolbar">
+        <select id="db-table"></select>
+        <input id="db-search" type="search" placeholder="在当前表中搜索…">
+        <button id="btn-db-refresh">刷新</button>
+        <span class="spacer"></span>
+        <button id="btn-db-exp-papers">papers.csv</button>
+        <button id="btn-db-exp-citations">citations.csv</button>
+        <button id="btn-db-exp-collections">collections.csv</button>
+        <button id="btn-db-exp-venues">venues.csv</button>
+        <button id="btn-db-clear-cache" title="清空联网抓取缓存（fetch_cache）并回收数据库空间；文献、引用边、期刊等级不受影响">清空联网缓存</button>
+        <button id="btn-ven-refresh" class="primary" title="对缺等级或超期（>180天）的期刊/会议，本地缓存优先、缺失才联网（easyScholar）逐个更新并标注时间">更新期刊等级</button>
+      </div>
+      <div id="db-info" class="muted" style="font-size:12px"></div>
+      <div style="overflow:auto; flex:1; border:1px solid var(--line); border-radius:10px;">
+        <table id="db-grid" style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead><tr id="db-grid-head"></tr></thead>
+          <tbody id="db-grid-body"></tbody>
+        </table>
+      </div>
+      <div class="toolbar" style="justify-content:center">
+        <button id="db-prev">← 上一页</button>
+        <span id="db-page" class="muted" style="min-width:220px; text-align:center"></span>
+        <button id="db-next">下一页 →</button>
+      </div>
+      <div class="card">
+        <h3>直接打开数据库文件</h3>
+        <p class="muted">SQLite 库文件：<b id="db-path"></b><br>
+        推荐工具：DB Browser for SQLite（免费图形界面）、VS Code 的 SQLite 插件、或命令行 sqlite3。表结构见上方各表浏览；papers 是文献表、citations 是引用边表（from_id 引用 to_id）、fetch_cache 是联网抓取缓存（可安全清空）。</p>
+      </div>
+    </section>
+
+    <!-- 设置视图 -->
+    <section id="view-settings" class="view">
+      <div class="card">
+        <h3>网络与隐私</h3>
+        <label class="row"><input type="checkbox" id="set-offline"> 纯离线模式（不发送任何请求，只用本地缓存）</label>
+        <label class="row">礼貌池邮箱 mailto（可选，OpenAlex 建议）<input id="set-mailto" type="email"></label>
+        <p class="muted">联网时仅访问固定白名单域名：api.openalex.org、opencitations.net、api.crossref.org、api.semanticscholar.org、easyscholar.cc，以及下载 OA PDF 时的开放仓储（arxiv.org、PubMed Central、bioRxiv 等）；只发送 DOI/标题查询，库内容不上传，结果全部缓存到本地。</p>
+      </div>
+      <div class="card">
+        <h3>抓取参数</h3>
+        <label class="row">单篇被引抓取上限 <input id="set-cap" type="number" min="50" max="5000" step="50"></label>
+        <label class="row">图谱候选节点上限 <input id="set-candcap" type="number" min="50" max="2000" step="50"></label>
+        <label class="row">每次「构建网络」处理篇数 <input id="set-batch" type="number" min="5" max="200"></label>
+        <label class="row"><input type="checkbox" id="set-oc"> 启用 OpenCitations 引用数据补充</label>
+      </div>
+      <div class="card">
+        <h3>Zotero 集成（只读）</h3>
+        <label class="row"><input type="checkbox" id="set-zot"> 启用 Zotero 本地 API（127.0.0.1:23119）</label>
+        <label class="row">Zotero 数据目录 <input id="set-zotdir" type="text" placeholder="Zotero 数据文件夹"></label>
+        <p class="muted">用于把 Zotero 条目同步进文献罗盘并关联其 PDF 附件（只读取路径，不复制不修改）。</p>
+      </div>
+      <div class="card">
+        <h3>数据位置</h3>
+        <p class="muted" id="set-datainfo"></p>
+        <button id="btn-settings-save" class="primary">保存设置</button>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="toast" class="hidden"></div>
+<script src="app.js?v=0.1.11"></script>
+</body>
+</html>

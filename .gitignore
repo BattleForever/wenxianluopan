@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.venv*/
+data/
+*.db
+*.sqlite*
+*.log
+ai_config.local.json
+*_credentials*/
+.env*
+evidence/
+.pytest_cache/

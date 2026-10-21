@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn>=0.29
+requests>=2.31
+networkx>=3.2
+bibtexparser==1.4.3
+pymupdf>=1.24
+scikit-learn>=1.5,<2
