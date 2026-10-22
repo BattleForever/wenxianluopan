@@ -24,7 +24,7 @@ _cache = None
 
 
 def norm_name(name: str) -> str:
-    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", (name or "").lower())
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", (name or "").lower().replace('&',' and '))
 
 
 def _load_cache():
@@ -38,16 +38,19 @@ def _load_cache():
                     continue
                 try:
                     rec = json.loads(line)
-                    _cache[rec["k"]] = rec
-                except (ValueError, KeyError):
+                    # Older workflows used spaces and "and" in the cache key;
+                    # the journal's actual name is the stable matching input.
+                    key=norm_name(rec.get('name') or rec.get('k'))
+                    if key:_cache[key] = rec
+                except (ValueError, KeyError, TypeError, AttributeError):
                     continue
     return _cache
 
 
 def local_rank(name: str):
     """本地缓存查询。返回 {rank:{...}, at} 或 None。"""
-    cache = _load_cache()
-    return cache.get(norm_name(name))
+    from .private_settings import LOCK
+    with LOCK:return _load_cache().get(norm_name(name))
 
 
 def load_key():
@@ -89,14 +92,16 @@ def online_rank(name: str, key: str):
         "rank": allrank,
         "at": time.strftime("%Y-%m-%d", time.localtime()),
     }
-    _load_cache()
-    _cache[rec["k"]] = rec
-    try:
-        CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        with CACHE_PATH.open("a", encoding="utf-8", newline="\n") as f:
-            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
-    except OSError:
-        pass  # 共享缓存写失败不影响本次结果
+    from .private_settings import LOCK
+    with LOCK:
+        _load_cache()
+        _cache[rec["k"]] = rec
+        try:
+            CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+            with CACHE_PATH.open("a", encoding="utf-8", newline="\n") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        except OSError:
+            pass  # 缓存写失败不影响本次结果
     return rec, False
 
 

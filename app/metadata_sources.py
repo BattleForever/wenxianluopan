@@ -99,14 +99,16 @@ def nature_metrics(name,memo):
 
 def authorized_metrics(name):
     rec=venues.local_rank(name)
-    if not rec:
+    cached=bool(rec and isinstance(rec.get('rank'),dict) and any(k in venues.rank_to_fields(rec['rank']) for k in ('impact_factor','cas_zone','jcr_zone')))
+    if not cached:
+        rec=None
         key=venues.load_key()
         if not key:return None
         rec,_=venues.online_rank(name,key)
     if not rec or not isinstance(rec.get('rank'),dict):return None
     if rec.get('name') and venues.norm_name(rec['name'])!=venues.norm_name(name):raise IdentityConflict('Journal identity conflict')
-    out=venues.rank_to_fields(rec['rank']);out.update(_source='easyScholar',_url='https://www.easyscholar.cc/',
+    out=venues.rank_to_fields(rec['rank']);out.update(_source='easyScholar 缓存' if cached else 'easyScholar',_url='https://www.easyscholar.cc/',
                                                   evidence={},metric_year=rec.get('metric_year'))
     for key in ('impact_factor','cas_zone','jcr_zone'):
-        if out.get(key):out['evidence'][key]={'value':out[key],'year':rec.get('metric_year'),'url':out['_url']}
+        if out.get(key):out['evidence'][key]={'value':out[key],'year':rec.get('metric_year'),'queried_at':rec.get('at'),'url':out['_url']}
     return out
