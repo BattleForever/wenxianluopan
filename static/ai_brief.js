@@ -355,7 +355,7 @@
         hasAny = true;
         var labelName = (X && X.fieldLabel ? X.fieldLabel(name) : name);
         var category = X && X.contentStatusCategory ? X.contentStatusCategory(entry) : 'existing';
-        var text = X && X.contentStatusText ? X.contentStatusText(category) : null;
+        var text = X && X.contentStatusText ? X.contentStatusText(category, name) : null;
         var rowEl = h('div', 'wnai-kv');
         rowEl.appendChild(h('span', 'wnai-kind', labelName));
         var val = h('span');

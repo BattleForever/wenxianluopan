@@ -1,4 +1,4 @@
-"""AI 速览（摘要版最小闭环）：校内模型驱动的双语速览与四要素提取。
+"""AI 速览（摘要版最小闭环）：模型驱动的双语速览与四要素提取。
 
 安全约束：
 - 私有配置仅在服务端读取（PAPERNET_AI_CONFIG_FILE 指定凭据文件路径；
@@ -130,6 +130,19 @@ def _config_path() -> Path:
     return Path(os.environ.get("PAPERNET_AI_CONFIG_FILE") or DEFAULT_CONFIG_FILE)
 
 
+def valid_llm_url(url):
+    from urllib.parse import urlparse
+    if not isinstance(url,str) or any(ord(ch)<33 for ch in url):
+        return False
+    try:
+        u=urlparse(url)
+        return (u.scheme=='https' and u.hostname in ALLOWED_LLM_HOSTS
+                and not u.username and not u.password and not u.query
+                and not u.fragment and u.port in (None,443))
+    except ValueError:
+        return False
+
+
 def load_ai_config() -> dict | None:
     """服务端读取私有配置。返回 {chat_url, request_model, api_key}；不可用返回 None。
 
@@ -137,7 +150,6 @@ def load_ai_config() -> dict | None:
     """
     path = _config_path()
     if not path.is_file():
-        log.warning("AI 配置文件不存在: %s", path)
         return None
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -147,15 +159,17 @@ def load_ai_config() -> dict | None:
     llm = raw.get("llm") if isinstance(raw, dict) else None
     if not isinstance(llm, dict):
         return None
-    url = llm.get("chat_completions_url") or (
-        (llm.get("base_url") or "").rstrip("/") + "/chat/completions")
+    base=llm.get('base_url') or ''
+    if not isinstance(base,str):return None
+    url = llm.get("chat_completions_url") or (base.rstrip("/") + "/chat/completions")
     key = os.environ.get("PAPERNET_LLM_API_KEY") or llm.get("api_key")
     model = llm.get("model") or DEFAULT_REQUEST_MODEL
-    if not url or not key or not model:
+    if (not isinstance(key,str) or not key.strip() or len(key)>8192
+            or any(ord(ch)<32 or ord(ch)==127 for ch in key)
+            or not isinstance(model,str) or not model.strip() or len(model)>200
+            or any(ord(ch)<32 for ch in model)):
         return None
-    from urllib.parse import urlparse
-    u = urlparse(url)
-    if u.scheme != "https" or (u.hostname or "").lower() not in ALLOWED_LLM_HOSTS:
+    if not valid_llm_url(url):
         log.warning("AI 配置的 LLM 地址不在固定 HTTPS 白名单内，已拒绝")
         return None
     return {"chat_url": url, "request_model": model, "api_key": str(key)}
@@ -193,7 +207,7 @@ def ai_generation_blocked(conn=None, check_config: bool = True) -> dict | None:
                            "不产生任何模型请求；已有内容与缓存仍可读"}
     if check_config and load_ai_config() is None:
         return {"code": "not_configured",
-                "message": "校内模型配置不可用，不产生任何模型请求"}
+                "message": "模型未配置，请在数据与设置中填写模型服务和密钥"}
     return None
 
 
@@ -203,7 +217,7 @@ _RETRYABLE_STATUS = {502, 503, 504}
 
 
 def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 2000) -> tuple[str, str]:
-    """调用校内模型，返回 (content, 响应 model 名)。至多一次有理由重试。
+    """调用模型，返回 (content, 响应 model 名)。至多一次有理由重试。
 
     重试仅限：连接错误/超时/网关 5xx。401/403/429/3xx 不重试。
     抛出 LLMServiceError（code/message 已脱敏）。
@@ -233,33 +247,33 @@ def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 
             resp = requests.post(cfg["chat_url"], json=payload, headers=headers,
                                  timeout=LLM_TIMEOUT, allow_redirects=False)
         except requests.exceptions.Timeout:
-            last_error = LLMServiceError("timeout", "校内模型请求超时，请稍后重试")
+            last_error = LLMServiceError("timeout", "模型请求超时，请稍后重试")
             log.warning("AI 请求超时（第 %d 次）", attempt)
         except requests.exceptions.RequestException:
-            last_error = LLMServiceError("network_error", "无法连接校内模型网关，请稍后重试")
+            last_error = LLMServiceError("network_error", "无法连接模型网关，请稍后重试")
             log.warning("AI 请求网络错误（第 %d 次）", attempt)
         else:
             if 300 <= resp.status_code < 400:
                 # 鉴权请求禁止随重定向流向其他站点：直接拒绝，不跟随
                 raise LLMServiceError("redirect_blocked",
-                                      "校内模型网关返回重定向，已按安全策略阻止")
+                                      "模型网关返回重定向，已按安全策略阻止")
             if resp.status_code in (401, 403):
                 raise LLMServiceError("auth_failed",
-                                      "校内模型鉴权失败（HTTP %d），请检查本地配置中的密钥" % resp.status_code)
+                                      "模型鉴权失败（HTTP %d），请检查本地配置中的密钥" % resp.status_code)
             if resp.status_code == 429:
-                raise LLMServiceError("rate_limited", "校内模型限流（429），请稍后重试")
+                raise LLMServiceError("rate_limited", "模型限流（429），请稍后重试")
             if resp.status_code >= 500:
                 last_error = LLMServiceError("service_error",
-                                             "校内模型服务错误（HTTP %d），请稍后重试" % resp.status_code)
+                                             "模型服务错误（HTTP %d），请稍后重试" % resp.status_code)
                 log.warning("AI 网关 5xx（第 %d 次）: HTTP %d", attempt, resp.status_code)
             elif resp.status_code != 200:
                 raise LLMServiceError("service_error",
-                                      "校内模型返回异常状态（HTTP %d）" % resp.status_code)
+                                      "模型返回异常状态（HTTP %d）" % resp.status_code)
             else:
                 try:
                     data = resp.json()
                 except ValueError:
-                    raise LLMServiceError("invalid_response", "校内模型返回了无法解析的响应")
+                    raise LLMServiceError("invalid_response", "模型返回了无法解析的响应")
                 choices = data.get("choices") if isinstance(data, dict) else None
                 content = None
                 if isinstance(choices, list) and choices:
@@ -268,7 +282,7 @@ def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 
                         content = msg.get("content")
                 resp_model = data.get("model") if isinstance(data, dict) else None
                 if not isinstance(content, str) or not content.strip():
-                    raise LLMServiceError("empty_output", "校内模型返回了空内容")
+                    raise LLMServiceError("empty_output", "模型返回了空内容")
                 return content, (resp_model if isinstance(resp_model, str) else "")
         if attempt == 1:
             time.sleep(1.0)
@@ -860,6 +874,8 @@ def _reuse_annotation(conn, paper_id: int, brief: dict | None) -> dict:
                     continue
             has_ai = (isinstance(brief, dict) and key != "summary"
                       and bool(brief.get(key)))
+            if has_ai and key == 'abstract_zh':
+                kind,kind_label='digest','摘要概括（不是完整译文）'
             entry = {"reused": False, "origin": None, "kind": kind,
                      "kind_label": kind_label,
                      "label": ("本程序新生成（AI 速览）" if has_ai
@@ -925,6 +941,17 @@ class BriefIn(BaseModel):
     force: bool = False
 
 
+def _read_brief(row):
+    if row is None or not row['brief_json']:
+        return None
+    brief=json.loads(row['brief_json'])
+    if isinstance(brief,dict):
+        # Recover only recorded metadata. Do not infer a model for old content.
+        for key in ('request_model','response_model'):
+            if not brief.get(key) and row[key]:brief[key]=row[key]
+    return brief
+
+
 @router.get("/briefs/{paper_id}")
 def get_brief(paper_id: int):
     """读取已有速览：只读，绝不触发联网（load_ai_config 仅读本地配置文件）。
@@ -947,7 +974,7 @@ def get_brief(paper_id: int):
         if not abstract_norm:
             # 摘要缺失/被删除：旧结果一律不得标为当前有效（明示原因）；
             # 历史 brief 仅作为离线可查看的参考附带返回。
-            brief = json.loads(row["brief_json"]) if (row and row["brief_json"]) else None
+            brief = _read_brief(row)
             msg = ("该论文摘要已缺失或为空，AI 速览仅依据摘要生成，"
                    "旧结果不再作为当前有效结果")
             if row:
@@ -978,7 +1005,7 @@ def get_brief(paper_id: int):
             validity = "unverifiable" if not content_reasons else "stale"
         else:
             validity = "stale" if content_reasons else "verified"
-        brief = json.loads(row["brief_json"]) if row["brief_json"] else None
+        brief = _read_brief(row)
         return _payload(paper_id, "abstract", "ready", True,
                         bool(content_reasons), brief, None, reasons,
                         current_paper=current_paper,
@@ -1022,7 +1049,7 @@ def _generate(body: BriefIn) -> dict:
             cached = _find_valid_cache(conn, body.paper_id, "abstract",
                                        abstract_norm, request_model, title_norm)
             if cached:
-                brief = json.loads(cached["brief_json"]) if cached["brief_json"] else None
+                brief = _read_brief(cached)
                 # §3.2：缓存命中内容未变化，防御性补登同步待办（幂等），
                 # 治愈历史保存与入队断开造成的缺失待办
                 enqueue_info = _enqueue_after_save(
@@ -1047,7 +1074,7 @@ def _generate(body: BriefIn) -> dict:
             return _payload(body.paper_id, "abstract", "unavailable",
                             False, False, None,
                             {"code": "not_configured",
-                             "message": "校内模型配置不可用，无法生成 AI 速览"},
+                             "message": "模型配置不可用，无法生成 AI 速览"},
                             current_paper=current_paper)
 
         # §3.6 缺口感知：生成前读取已有中文题名/摘要译文（本地读取，不外呼）

@@ -183,7 +183,8 @@
     existing: '已有内容（优先复用，未重新生成）',
     missing: '本篇暂无已保存的该字段产物'
   };
-  function contentStatusText(category) {
+  function contentStatusText(category, field) {
+    if (category === 'translation' && field === 'title_zh') return '题名翻译（与摘要译文区分）';
     return CONTENT_STATUS_TEXT[category] || null;
   }
 

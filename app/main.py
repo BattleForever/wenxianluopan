@@ -15,6 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import graph as graphmod
+from . import __version__
 from . import importer, citations as citationsmod
 from .config import DATA_DIR, DB_PATH, HOST, PDF_DIR, PORT, PDF_EXTRA_HOSTS, STATIC_DIR
 from .db import get_db, get_setting, init_db, set_setting
@@ -27,7 +28,7 @@ log = logging.getLogger("papernet")
 
 init_db()
 
-app = FastAPI(title="PaperNet", docs_url=None, redoc_url=None)
+app = FastAPI(title="文献罗盘", version=__version__, docs_url=None, redoc_url=None)
 
 
 # ------------------------------------------------------------------ models
@@ -91,7 +92,7 @@ def health():
         n_lib = conn.execute("SELECT COUNT(*) c FROM papers WHERE status='library'").fetchone()["c"]
         n_cand = conn.execute("SELECT COUNT(*) c FROM papers WHERE status!='library'").fetchone()["c"]
         n_edge = conn.execute("SELECT COUNT(*) c FROM citations").fetchone()["c"]
-    return {"ok": True, "online": is_online(), "library": n_lib,
+    return {"ok": True, "version": __version__, "online": is_online(), "library": n_lib,
             "candidates": n_cand, "edges": n_edge,
             "data_dir": str(DATA_DIR)}
 
