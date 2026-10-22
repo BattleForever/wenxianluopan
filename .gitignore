@@ -22,3 +22,7 @@ private/
 *.pem
 *.key
 *.tmp
+
+# Maintenance documentation remains in the local version archive.
+CHANGELOG.md
+docs/UPGRADING.md
