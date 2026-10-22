@@ -151,6 +151,10 @@ class ZoteroClient:
         # V4-01：兼容历史基址（/api 尾巴），统一归一化
         self.base = normalize_base(base)
         self.api_key = api_key or os.environ.get(API_KEY_ENV) or None
+        if self.api_key is None:
+            from .private_settings import read_json,LOCK
+            from .config import DATA_DIR
+            with LOCK:self.api_key=read_json(DATA_DIR/'private'/'zotero.local.json').get('api_key') or None
         self.timeout = timeout
         self._send = send or _default_send
         self._server_id: str | None = None

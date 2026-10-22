@@ -282,6 +282,8 @@ def get_guide(pid:int):
 
 @router.post('/{pid}/pdf-guide')
 def generate(pid:int):
+    from .trash import ensure_active
+    with get_db() as c:ensure_active(c,[pid])
     blocked=ai_brief.ai_generation_blocked()
     if blocked:return {'status':'unavailable','error':blocked}
     p,f,pages,digest=_source(pid)

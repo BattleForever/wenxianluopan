@@ -177,7 +177,10 @@ def create(options):
                'options':{**options,'seed_ids':seed_ids},'status':'queued','results':[],
                'processed':0,'fetches':0,'new_records':0,'errors':[],'round':0,
                'message':'准备扩展','truncated':False}
-        save(job)
+        try:save(job)
+        except Exception:
+            _cancel.pop(job_id,None)
+            raise RuntimeError('任务未能保存，请检查数据目录后重试。')
         def run():
             try:
                 job.update(status='running',message='按引用关系逐轮探索')
@@ -190,10 +193,16 @@ def create(options):
             except Exception as exc:
                 job.update(status='failed',message=str(exc)[:300])
             finally:
-                save(job)
-                with _guard:
-                    _cancel.pop(job_id,None)
-        threading.Thread(target=run,daemon=True).start()
+                try:save(job)
+                finally:
+                    with _guard:_cancel.pop(job_id,None)
+        try:threading.Thread(target=run,daemon=True).start()
+        except Exception:
+            _cancel.pop(job_id,None)
+            job.update(status='failed',message='扩展任务未能启动，可重试。')
+            try:save(job)
+            except Exception:pass
+            raise RuntimeError('扩展任务未能启动，可重试。')
         return job
 
 

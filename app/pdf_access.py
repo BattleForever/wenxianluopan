@@ -1,5 +1,5 @@
 """Explicit PDF discovery/upload/download. No retrieval is triggered by GET."""
-import hashlib
+import hashlib,os,tempfile
 from pathlib import Path
 from urllib.parse import urlparse,urljoin
 import fitz
@@ -9,6 +9,7 @@ from .db import get_db
 from .config import PDF_DIR
 from . import metadata_sources,pdf_guide
 from .netclient import is_online
+from .trash import ensure_active
 
 router=APIRouter(prefix='/api/papers')
 MAX_BYTES=40*1024*1024
@@ -38,19 +39,32 @@ def validate_pdf(raw):
     except Exception:raise HTTPException(422,'文件无法作为PDF读取，请重新选择')
 
 def save_pdf(pid,raw):
+    with get_db() as c:ensure_active(c,[pid])
     pages=validate_pdf(raw);target=PDF_DIR/(str(pid)+'_'+hashlib.sha256(raw).hexdigest()[:16]+'.pdf')
     PDF_DIR.mkdir(parents=True,exist_ok=True)
     # Content-addressed copies never overwrite a user's existing source file.
-    if not target.exists():target.write_bytes(raw)
-    with get_db() as c:c.execute('UPDATE papers SET local_pdf_path=? WHERE id=?',(str(target),pid))
-    return {'ready':True,'pages':pages,'filename':target.name}
+    if not target.exists():
+        fd,name=tempfile.mkstemp(dir=PDF_DIR,suffix='.tmp')
+        try:
+            with os.fdopen(fd,'wb') as stream:stream.write(raw)
+            os.replace(name,target)
+        finally:Path(name).unlink(missing_ok=True)
+    with get_db() as c:
+        ensure_active(c,[pid])
+        c.execute('UPDATE papers SET local_pdf_path=? WHERE id=?',(str(target),pid))
+    return status(pid)
 
 def public_source(p):
     f=Path(p.get('local_pdf_path') or '')
     if not f.is_file():return None
     try:
+        if f.stat().st_size>MAX_BYTES:return {'ready':False,'reading_ready':False,'reading_issue':'PDF超过40 MB，请选择较小版本'}
         with fitz.open(f) as d:
-            return {'ready':not d.needs_pass,'filename':f.name,'pages':len(d)}
+            if d.needs_pass:return {'ready':False,'reading_ready':False,'reading_issue':'PDF已加密，请先解锁后上传'}
+            issue=''
+            if len(d)>80:issue='当前支持不超过80页的论文，请选择正文版本'
+            elif sum(len(page.get_text()) for page in d)<300:issue='PDF缺少可提取文本，请先完成OCR后重新上传'
+            return {'ready':True,'reading_ready':not issue,'reading_issue':issue,'filename':f.name,'pages':len(d)}
     except Exception:return None
 
 @router.get('/{pid}/pdf-access')
@@ -61,10 +75,12 @@ def status(pid:int):
 
 @router.post('/{pid}/pdf-access/find')
 def find(pid:int):
+    with get_db() as c:ensure_active(c,[pid])
     p=paper(pid)
     try:
-        path=pdf_guide._find_pdf(p)
-        return {**status(pid),'message':'已关联可读PDF'}
+        pdf_guide._find_pdf(p)
+        s=status(pid)
+        if s['ready']:return {**s,'message':s.get('reading_issue') or '已关联可读PDF'}
     except HTTPException:pass
     if not is_online():return {**status(pid),'message':'未找到本机附件，可上传PDF或开启联网后查找公开全文'}
     found=None
@@ -91,6 +107,7 @@ def checked_url(url):
 
 @router.post('/{pid}/pdf-access/download')
 def download(pid:int):
+    with get_db() as c:ensure_active(c,[pid])
     p=paper(pid)
     existing=public_source(p)
     if existing and existing['ready']:return existing

@@ -8,3 +8,5 @@
 dialog.detail-dialog{top:48px;height:calc(100dvh - 48px);max-height:calc(100dvh - 48px)}
 #background-task-dock::before{content:'';position:absolute;right:54px;width:17px;height:90px;bottom:0}
 #background-tasks-toggle{margin-right:8px;font-size:11px}.detail-actions #detail-zflush{max-width:100%;white-space:normal;text-align:left}
+
+.pg-attachment-panel{border:1px solid #304d63;border-radius:10px;padding:20px 24px;background:#13263a;margin-bottom:24px}.pg-attachment-panel h4{font-size:15px;margin:0}.pg-attachment-panel .pg-source-choice{margin:16px 0 8px}

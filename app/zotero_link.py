@@ -84,6 +84,9 @@ class Sync(BaseModel):
 def sync(body:Sync):
     if not _sync_guard.acquire(blocking=False):raise HTTPException(409,'另一篇文献正在同步，请稍后重试')
     try:
+        with get_db() as c:
+            if not c.execute('SELECT 1 FROM papers WHERE id=?',(body.paper_id,)).fetchone():raise HTTPException(404,'文献不存在')
+            trash.ensure_active(c,[body.paper_id])
         cli=client()
         try:rows=collection_rows(cli)
         except ZoteroError:raise HTTPException(503,'未连接Zotero，请先启动桌面端')

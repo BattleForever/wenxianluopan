@@ -65,9 +65,13 @@ class ExportIn(BaseModel):
     job_id: str = ''
 
 
-def load_papers():
+def load_papers(scope='all'):
     with get_db() as conn:
-        rows = conn.execute("SELECT * FROM papers WHERE id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library') ORDER BY id").fetchall()
+        extra={
+            'library':" AND status='library'",
+            'reading':" AND id IN (SELECT paper_id FROM reading_list WHERE paper_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='reading'))",
+        }.get(scope,'')
+        rows = conn.execute("SELECT * FROM papers WHERE id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library')"+extra+" ORDER BY id").fetchall()
         venues = {r['name_norm']:dict(r) for r in conn.execute('SELECT * FROM venues')}
         reading = {r['paper_id']:dict(r) for r in conn.execute("SELECT * FROM reading_list WHERE paper_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='reading')")}
         grouping = folders.memberships(conn)
@@ -120,7 +124,9 @@ def cancel(job_id:str):
 def search(body:SearchIn):
     if body.year_min and body.year_max and body.year_min>body.year_max:
         raise HTTPException(400,'开始年份应不晚于结束年份。')
-    papers = load_papers()
+    # Relevance keeps the full corpus for seed/query context. Other views only
+    # decode the relevant records, especially small reading lists in large libraries.
+    papers = load_papers('all' if body.sort=='relevance' else body.scope)
     task = exploration.get(body.job_id) if body.job_id else None
     if body.scope=='task' and not task: raise HTTPException(400,'请先建立或选择扩展任务。')
     paths = {p['id']:p for p in (task or {}).get('results',[])}

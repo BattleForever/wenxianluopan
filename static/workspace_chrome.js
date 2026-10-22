@@ -21,5 +21,5 @@ document.getElementById('task-orb').onclick=()=>window.WenxianEnrichment?.show()
 document.getElementById('task-dock-hide').onclick=()=>{hiddenId=job?.id;dock.hidden=true;};
 document.getElementById('task-dock-inline').onclick=()=>{const bar=document.getElementById('enrichment-progress');bar.dataset.dismissed='';bar.hidden=false;bar.dataset.view='inline';window.dispatchEvent(new Event('resize'));};
 window.WenxianTaskDock={update,show:()=>{hiddenId=null;update(job);}};
-const taskToggle=document.createElement('button');taskToggle.id='background-tasks-toggle';taskToggle.className='secondary small';taskToggle.textContent='后台任务';taskToggle.onclick=()=>{if(job){hiddenId=null;update(job);window.WenxianEnrichment?.show();}else{taskToggle.textContent='暂无后台任务';setTimeout(()=>taskToggle.textContent='后台任务',1800);}};document.getElementById('detail-toggle').before(taskToggle);
+const taskToggle=document.createElement('button');taskToggle.id='background-tasks-toggle';taskToggle.className='secondary small';taskToggle.textContent='后台任务';taskToggle.onclick=()=>{hiddenId=null;update(job);window.WenxianEnrichment?.show();};document.getElementById('detail-toggle').before(taskToggle);
 })();

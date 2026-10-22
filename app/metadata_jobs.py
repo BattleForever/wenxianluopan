@@ -13,6 +13,7 @@ from .db import get_db,get_bool_setting
 from .library_migrate import compute_source_hash
 from .linkview import number,zone_number
 from .store import norm_venue,norm_title,_ensure_venue_row
+from .trash import ensure_active
 
 router=APIRouter(prefix='/api/research/enrichment')
 _lock=threading.Lock();_active={}
@@ -46,7 +47,9 @@ def save(j):
     with get_db() as c:c.execute('INSERT OR REPLACE INTO enrichment_jobs VALUES(?,?)',(j['id'],json.dumps(j,ensure_ascii=False)))
 
 def paper(pid):
-    with get_db() as c:r=c.execute('SELECT * FROM papers WHERE id=?',(pid,)).fetchone()
+    with get_db() as c:
+        ensure_active(c,[pid])
+        r=c.execute('SELECT * FROM papers WHERE id=?',(pid,)).fetchone()
     if not r:raise ValueError('paper missing')
     return dict(r)
 
@@ -61,6 +64,7 @@ def record(c,pid,field,source,url,evidence=None):
 def apply_biblio(pid,data):
     filled=[]
     with get_db() as c:
+        ensure_active(c,[pid])
         p=dict(c.execute('SELECT * FROM papers WHERE id=?',(pid,)).fetchone())
         for f in RAW:
             value=data.get(f)
@@ -163,6 +167,7 @@ quote 选取8–300字符的原文连续片段（原文不足8字符时引用全
         valid[f]=(text.strip(),quote,src)
     if not valid:raise ValueError('No verified AI field')
     with get_db() as c:
+        ensure_active(c,[pid])
         current=dict(c.execute('SELECT * FROM papers WHERE id=?',(pid,)).fetchone())
         if compute_source_hash(current.get('title'),current.get('abstract'))!=digest:raise ValueError('source changed during generation')
         cfg_now=ai_brief.load_ai_config()
@@ -268,21 +273,36 @@ def worker(j,cancel):
 def start(body:Start):
     with _lock:
         if _active:raise HTTPException(409,'已有补全任务正在进行，请完成或停止后再试')
-        with get_db() as c:ids=[pid for pid in dict.fromkeys(body.ids) if c.execute('SELECT 1 FROM papers WHERE id=?',(pid,)).fetchone()]
+        with get_db() as c:
+            ensure_active(c,body.ids)
+            ids=[pid for pid in dict.fromkeys(body.ids) if c.execute('SELECT 1 FROM papers WHERE id=?',(pid,)).fetchone()]
         if not ids:raise HTTPException(404,'没有可处理的文献')
         j={'id':uuid.uuid4().hex,'status':'queued','stage':'等待开始','ids':ids,'total':len(ids),'completed':0,'fields_filled':0,'results':[],
            'options':body.model_dump(exclude={'ids'}),'created_at':now(),'finished_at':None}
-        cancel=threading.Event();_active[j['id']]=cancel;save(j)
-        try:threading.Thread(target=worker,args=(j,cancel),daemon=True).start()
+        cancel=threading.Event();_active[j['id']]=cancel
+        try:
+            save(j)
+            threading.Thread(target=worker,args=(j,cancel),daemon=True).start()
         except Exception:
-            _active.pop(j['id'],None);j.update(status='failed',stage='任务启动失败',finished_at=now());save(j);raise HTTPException(503,'补全任务启动失败')
+            _active.pop(j['id'],None);j.update(status='failed',stage='任务启动失败',finished_at=now())
+            try:save(j)
+            except Exception:pass
+            raise HTTPException(503,'补全任务启动失败，已保存内容保留，请重试')
     return j
+
+@router.get('')
+def recent():
+    with get_db() as c:rows=c.execute('SELECT payload FROM enrichment_jobs ORDER BY rowid DESC LIMIT 10').fetchall()
+    fields=('id','status','stage','total','completed','fields_filled','created_at','finished_at')
+    return {'jobs':[{k:j.get(k) for k in fields} for j in (json.loads(r['payload']) for r in rows)]}
 
 @router.get('/{jid}')
 def read(jid:str):
     with get_db() as c:r=c.execute('SELECT payload FROM enrichment_jobs WHERE id=?',(jid,)).fetchone()
     if not r:raise HTTPException(404,'补全任务不存在')
-    return json.loads(r['payload'])
+    j=json.loads(r['payload']);done={r['paper_id']:r for r in j.get('results',[])}
+    j['retry_ids']=[pid for pid in j.get('ids',[]) if pid not in done or done[pid].get('still_missing') or done[pid].get('errors') or done[pid].get('outcome')=='not_found']
+    return j
 
 @router.post('/{jid}/cancel')
 def stop(jid:str):
