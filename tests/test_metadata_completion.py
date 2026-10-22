@@ -63,6 +63,12 @@ class Completion(unittest.TestCase):
   with get_db() as c:c.execute("UPDATE venues SET impact_factor='未知',cas_zone='N/A' WHERE name='Placeholder journal'")
   fields=m.apply_metrics(self.pid,{'impact_factor':'8.8','cas_zone':'1区','_source':'authorized fixture','_url':None})
   self.assertEqual(set(fields),{'impact_factor','cas_zone'})
+ def test_metric_sources_shared_with_other_papers_in_same_journal(self):
+  m.apply_biblio(self.pid,{'venue':'Shared journal','_source':'test','_url':None})
+  m.apply_metrics(self.pid,{'cas_zone':'1区','_source':'easyScholar 缓存','_url':None,'evidence':{'cas_zone':{'year':None,'queried_at':'2026-09-26'}}})
+  with get_db() as c:other,_=upsert_paper(c,{'title':self.id()+' other','venue':'Shared journal'},'test','library')
+  source=next(r for r in m.field_sources(other)['sources'] if r['field']=='cas_zone')
+  self.assertEqual(source['scope'],'venue');self.assertIsNone(json.loads(source['evidence'])['year']);self.assertIn('2026-09-26',source['evidence'])
  def test_completion_enqueues_only_without_external_write(self):
   d={'authors':['Test'],'year':2025,'venue':'Test','_source':'Crossref','_url':None}
   with patch.object(s,'crossref',return_value=d),patch.object(m.enrich,'_enqueue',return_value=({'queued':True,'state':'pending','queue_id':1},True)) as enqueue:

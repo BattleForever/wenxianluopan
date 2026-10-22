@@ -279,6 +279,18 @@ def stop(jid:str):
 
 @router.get('/sources/{pid}')
 def field_sources(pid:int):
-    paper(pid)
-    with get_db() as c:rows=c.execute('SELECT field,source,url,evidence,recorded_at FROM metadata_field_sources WHERE paper_id=? ORDER BY id DESC LIMIT 60',(pid,)).fetchall()
-    return {'paper_id':pid,'sources':[dict(r) for r in rows]}
+    try:p=paper(pid)
+    except ValueError:raise HTTPException(404,'文献不存在')
+    with get_db() as c:
+        rows=[dict(r) for r in c.execute('SELECT field,source,url,evidence,recorded_at FROM metadata_field_sources WHERE paper_id=? ORDER BY id DESC LIMIT 60',(pid,)).fetchall()]
+        venue=c.execute('SELECT extra_json FROM venues WHERE name_norm=?',(norm_venue(p.get('venue') or ''),)).fetchone()
+    try:extra=json.loads(venue['extra_json'] or '{}') if venue else {}
+    except (ValueError,TypeError):extra={}
+    known={r['field'] for r in rows}
+    # Metrics belong to a journal, so every paper in that journal must expose
+    # the same evidence even if another paper first triggered the lookup.
+    for field,proof in (extra.get('metric_evidence',{}) if isinstance(extra,dict) else {}).items():
+        if field in ('impact_factor','cas_zone','jcr_zone') and field not in known and isinstance(proof,dict):
+            rows.append({'field':field,'source':proof.get('source'),'url':proof.get('url'),
+                         'recorded_at':proof.get('checked_at'),'evidence':json.dumps(proof,ensure_ascii=False),'scope':'venue'})
+    return {'paper_id':pid,'sources':rows}
