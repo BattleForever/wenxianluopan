@@ -67,6 +67,9 @@ def _load_rows(include_candidates: bool, collection_id=None,
                     uniq.append(r)
             uniq.sort(key=lambda r: r["cited_by_count"] or 0, reverse=True)
             rows = libs + uniq[:int(candidate_cap)]
+        from .trash import hidden
+        removed=hidden(conn)
+        rows=[r for r in rows if r['id'] not in removed]
         # 只保留两端都在节点集内的边
         ids = {r["id"] for r in rows}
         edges = conn.execute("SELECT from_id, to_id, src FROM citations").fetchall()

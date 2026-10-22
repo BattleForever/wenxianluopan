@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from . import exploration, relevance
+from . import exploration, relevance, folders, trash
 from .db import get_db
 from .graph import compute_clusters
 from .linkview import number, venue_public, zone_number
@@ -20,6 +20,8 @@ def init():
     exploration.init()
     with get_db() as conn:
         conn.execute("CREATE TABLE IF NOT EXISTS reading_list (paper_id INTEGER PRIMARY KEY, note TEXT DEFAULT '', added_at TEXT DEFAULT (datetime('now','localtime')))")
+    folders.init()
+    trash.init()
 
 
 class ExploreIn(BaseModel):
@@ -45,6 +47,10 @@ class SearchIn(BaseModel):
     cas_missing: bool = False
     zone_scheme: Literal['cas','jcr'] = 'cas'
     limit: int = Field(default=100,ge=1,le=500)
+    offset: int = Field(default=0,ge=0,le=1000000)
+    folder_id: int | None = Field(default=None,gt=0)
+    unfiled: bool = False
+    folder_descendants: bool = True
 
 
 class ReadingIn(BaseModel):
@@ -61,9 +67,10 @@ class ExportIn(BaseModel):
 
 def load_papers():
     with get_db() as conn:
-        rows = conn.execute('SELECT * FROM papers ORDER BY id').fetchall()
+        rows = conn.execute("SELECT * FROM papers WHERE id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library') ORDER BY id").fetchall()
         venues = {r['name_norm']:dict(r) for r in conn.execute('SELECT * FROM venues')}
-        reading = {r['paper_id']:dict(r) for r in conn.execute('SELECT * FROM reading_list')}
+        reading = {r['paper_id']:dict(r) for r in conn.execute("SELECT * FROM reading_list WHERE paper_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='reading')")}
+        grouping = folders.memberships(conn)
     papers = []
     for row in rows:
         p = paper_dict(row)
@@ -71,6 +78,7 @@ def load_papers():
         p['venue_info'] = venue_public(v) if v else None
         p['in_reading_list'] = p['id'] in reading
         p['reading_note'] = (reading.get(p['id']) or {}).get('note','')
+        p['folders'] = grouping.get(p['id'],[])
         papers.append(p)
     return papers
 
@@ -78,7 +86,7 @@ def load_papers():
 @router.get('/state')
 def state():
     with get_db() as conn:
-        n = conn.execute('SELECT COUNT(*) n FROM reading_list r JOIN papers p ON p.id=r.paper_id').fetchone()['n']
+        n = conn.execute('SELECT COUNT(*) n FROM reading_list r JOIN papers p ON p.id=r.paper_id WHERE r.paper_id NOT IN (SELECT paper_id FROM paper_trash)').fetchone()['n']
         jobs = [json.loads(r['payload']) for r in conn.execute('SELECT payload FROM research_jobs ORDER BY rowid DESC LIMIT 5')]
     return {'reading_count':n,'jobs':[{k:j[k] for k in ('id','status','created_at','options','processed','new_records')} for j in jobs],
             'version':__version__,'method':'本地 TF-IDF 与 LSA 文本排序及引用网络重叠推荐',
@@ -120,6 +128,7 @@ def search(body:SearchIn):
     if body.sort=='relevance': scores,model = relevance.rank(papers,body.query,body.seed_ids)
     with get_db() as conn:
         edges = [dict(r) for r in conn.execute('SELECT from_id,to_id,src FROM citations')]
+        allowed = folders.filtered_ids(conn,body.scope,body.folder_id,body.unfiled,body.folder_descendants)
     refs,citers = {},{}
     for e in edges:
         refs.setdefault(e['from_id'],set()).add(e['to_id'])
@@ -130,6 +139,7 @@ def search(body:SearchIn):
     query = body.query.casefold().strip()
     for p in papers:
         pid = p['id']
+        if allowed is not None and pid not in allowed:continue
         if body.scope=='library' and p['status']!='library': continue
         if body.scope=='reading' and not p['in_reading_list']: continue
         if body.scope=='task' and pid not in paths: continue
@@ -165,12 +175,13 @@ def search(body:SearchIn):
                else p.get('network_score') if body.sort=='network' else (p.get('discovery') or {}).get('depth') if body.sort=='depth' else p.get('cited_by_count'))
         return (value is None,(value if body.sort in ('cas_zone','year_asc','depth') else -value) if value is not None else 0,-(p.get('year') or 0),p['id'])
     output.sort(key=key)
-    visible=output[:body.limit]
+    visible=output[body.offset:body.offset+body.limit]
     ids={p['id'] for p in visible}
     ge=[e for e in edges if e['from_id'] in ids and e['to_id'] in ids]
     clusters=compute_clusters(visible,ge)
     for p in visible: p['cluster']=clusters.get(p['id'],0)
     return {'total':len(output),'shown':len(visible),'papers':visible,'model':model,'facets':facets,
+            'offset':body.offset,'limit':body.limit,'has_more':body.offset+len(visible)<len(output),
             'edges':[{'from':e['from_id'],'to':e['to_id'],'source':e['src']} for e in ge],
             'metric_note':'IF 和分区属于期刊指标，不是论文质量分；未知值显示未知并排在最后，不按 0 处理；'
                           '设置 IF/分区/年份阈值时，该指标未知的文献会被排除（分区阈值同样排除未知分区）；'
@@ -179,13 +190,21 @@ def search(body:SearchIn):
 
 @router.post('/reading')
 def reading(body:ReadingIn):
+    if body.action=='remove':
+        result=trash.put(trash.Put(ids=body.ids,scope='reading'))
+        return {'ok':True,'affected':result['affected'],'trashed':True}
+    # Explicitly adding a previously removed item is a restoration, not a new
+    # record: preserve its existing note and folder memberships.
+    trash.restore(trash.Restore(ids=body.ids,scope='reading'))
     with get_db() as conn:
+        trash.ensure_active(conn,body.ids)
         ids=[pid for pid in set(body.ids) if conn.execute('SELECT 1 FROM papers WHERE id=?',(pid,)).fetchone()]
         for pid in ids:
             if body.action=='add':
                 conn.execute('INSERT OR IGNORE INTO reading_list(paper_id) VALUES(?)',(pid,))
                 if body.note is not None: conn.execute('UPDATE reading_list SET note=? WHERE paper_id=?',(body.note,pid))
             else: conn.execute('DELETE FROM reading_list WHERE paper_id=?',(pid,))
+        folders.reading_changed(conn,ids,removed=body.action=='remove')
     return {'ok':True,'affected':len(ids)}
 
 

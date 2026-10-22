@@ -89,9 +89,9 @@ def _err(e: Exception):
 @app.get("/api/health")
 def health():
     with get_db() as conn:
-        n_lib = conn.execute("SELECT COUNT(*) c FROM papers WHERE status='library'").fetchone()["c"]
-        n_cand = conn.execute("SELECT COUNT(*) c FROM papers WHERE status!='library'").fetchone()["c"]
-        n_edge = conn.execute("SELECT COUNT(*) c FROM citations").fetchone()["c"]
+        n_lib = conn.execute("SELECT COUNT(*) c FROM papers WHERE status='library' AND id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library')").fetchone()["c"]
+        n_cand = conn.execute("SELECT COUNT(*) c FROM papers WHERE status!='library' AND id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library')").fetchone()["c"]
+        n_edge = conn.execute("SELECT COUNT(*) c FROM citations WHERE from_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library') AND to_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library')").fetchone()["c"]
     return {"ok": True, "version": __version__, "online": is_online(), "library": n_lib,
             "candidates": n_cand, "edges": n_edge,
             "data_dir": str(DATA_DIR)}
@@ -212,7 +212,7 @@ def api_zotero_sync(body: ZoteroSyncIn | None = None):
 def api_papers(query: str = "", status: str = "", limit: int = 200, offset: int = 0):
     limit = max(1, min(limit, 1000))  # SQLite 负 LIMIT 语义是"不限"，必须夹紧
     with get_db() as conn:
-        sql = "SELECT * FROM papers WHERE 1=1"
+        sql = "SELECT * FROM papers WHERE id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library')"
         params: list = []
         if status in ("library", "candidate"):
             sql += " AND status=?"
@@ -258,18 +258,13 @@ def api_paper_detail(paper_id: int):
 
 @app.delete("/api/papers/{paper_id}")
 def api_paper_delete(paper_id: int):
-    # 只删除 PaperNet 自身数据库记录；local_pdf_path 指向的用户原文件一律不动
-    with get_db() as conn:
-        conn.execute("DELETE FROM papers WHERE id=?", (paper_id,))
-        conn.execute("DELETE FROM citations WHERE from_id=? OR to_id=?",
-                     (paper_id, paper_id))
-        conn.execute("DELETE FROM collection_items WHERE paper_id=?", (paper_id,))
-    return {"ok": True}
+    return {'ok':True,**trash.put(trash.Put(ids=[paper_id],scope='library'))}
 
 
 @app.post("/api/papers/promote")
 def api_promote(body: IDsIn):
     with get_db() as conn:
+        trash.ensure_active(conn,body.ids)
         cur = conn.executemany(
             "UPDATE papers SET status='library' WHERE id=? AND status!='library'",
             [(i,) for i in body.ids],
@@ -868,6 +863,8 @@ from . import ai_settings
 app.include_router(ai_settings.router)
 from . import ai_profiles
 app.include_router(ai_profiles.router)
+from . import folders
+app.include_router(folders.router)
 from . import data_sources
 app.include_router(data_sources.router)
 from . import metadata_jobs
@@ -881,6 +878,23 @@ app.include_router(pdf_guide.router)
 from . import workspace
 workspace.init()
 app.include_router(workspace.router)
+
+from . import trash
+app.include_router(trash.router)
+
+@app.on_event('startup')
+async def start_trash_maintenance():
+    import asyncio
+    app.state.trash_task=asyncio.create_task(trash.maintenance())
+
+@app.on_event('shutdown')
+async def stop_trash_maintenance():
+    import asyncio
+    from contextlib import suppress
+    task=getattr(app.state,'trash_task',None)
+    if task:
+        task.cancel()
+        with suppress(asyncio.CancelledError):await task
 
 from . import zotero_sync as zotero_sync_module  # B 线（parallel_v03）：Zotero 同步队列与状态接口
 zotero_sync_module.init()

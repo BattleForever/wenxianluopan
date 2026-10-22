@@ -109,6 +109,9 @@ def walk(seed_ids, direction='both', depth=2, per_direction=20, max_nodes=200,
             break
         directions = ['references','citing'] if direction == 'both' else [direction]
         with get_db() as conn:
+            from .trash import hidden
+            removed=hidden(conn)
+            if pid in removed:continue
             for way in directions:
                 sql = ('SELECT p.id,c.src FROM citations c JOIN papers p ON p.id=c.to_id WHERE c.from_id=?'
                        if way == 'references' else 'SELECT p.id,c.src FROM citations c JOIN papers p ON p.id=c.from_id WHERE c.to_id=?')
@@ -118,6 +121,7 @@ def walk(seed_ids, direction='both', depth=2, per_direction=20, max_nodes=200,
                     truncated = True
                 for row in neighbors[:per_direction]:
                     nid = row['id']
+                    if nid in removed:continue
                     # P1：实际观察到的依据一律记录（含已见节点被另一父节点
                     # 再次观察的情形），去重键 seed,parent,id,relation。
                     # 只记录实际使用的 per_direction 条样本；用于检测截断的
@@ -160,6 +164,8 @@ def create(options):
         seed_ids = list(dict.fromkeys(options['seed_ids']))
         with get_db() as conn:
             actual = {r['id'] for r in conn.execute('SELECT id FROM papers WHERE id IN ('+','.join('?' for _ in seed_ids)+')',seed_ids)}
+            from .trash import hidden
+            actual-=hidden(conn)
         if set(seed_ids) != actual:
             raise ValueError('种子文献不存在。')
         if options['online'] and not is_online():
