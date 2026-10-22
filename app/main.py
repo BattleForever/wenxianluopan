@@ -246,12 +246,13 @@ def api_paper_detail(paper_id: int):
         if vn:
             venue_row = conn.execute(
                 "SELECT name, kind, impact_factor, jcr_zone, cas_zone, cas_top, "
-                "cas_sub, ccf_tier, source, updated_at FROM venues WHERE name_norm=?",
+                "cas_sub, ccf_tier, source, extra_json, updated_at FROM venues WHERE name_norm=?",
                 (vn,)).fetchone()
     d = paper_dict(row)
     d["edges_in"] = in_deg
     d["edges_out"] = out_deg
-    d["venue_info"] = dict(venue_row) if venue_row else None
+    from .linkview import venue_public
+    d["venue_info"] = venue_public(dict(venue_row)) if venue_row else None
     return d
 
 
@@ -865,6 +866,13 @@ app.include_router(ai_brief_module.router)
 
 from . import ai_settings
 app.include_router(ai_settings.router)
+from . import ai_profiles
+app.include_router(ai_profiles.router)
+from . import data_sources
+app.include_router(data_sources.router)
+from . import metadata_jobs
+metadata_jobs.init()
+app.include_router(metadata_jobs.router)
 
 from . import pdf_guide
 pdf_guide.init()

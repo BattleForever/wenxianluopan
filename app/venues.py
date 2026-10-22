@@ -51,6 +51,8 @@ def local_rank(name: str):
 
 
 def load_key():
+    from .private_settings import service_key_exists,service_key
+    if service_key_exists('easyscholar'):return service_key('easyscholar')
     if KEY_PATH.exists():
         k = KEY_PATH.read_text(encoding="utf-8").strip()
         return k or None
@@ -69,6 +71,7 @@ def online_rank(name: str, key: str):
         params={"secretKey": key, "publicationName": name},
         timeout=30,
         headers={"User-Agent": "PaperNet/0.1"},
+        allow_redirects=False,
     )
     if resp.status_code != 200:
         raise RuntimeError(f"easyscholar HTTP {resp.status_code}")

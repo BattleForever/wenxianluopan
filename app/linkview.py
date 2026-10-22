@@ -37,8 +37,12 @@ def metric_year_from_extra(extra_json):
 
 def venue_public(v):
     """Venue fields exposed to clients, including metric year when determinable."""
-    out = {k: v.get(k) for k in ('name', 'impact_factor', 'cas_zone', 'jcr_zone', 'ccf_tier', 'source', 'updated_at')}
+    out = {k: v.get(k) for k in ('name', 'kind', 'impact_factor', 'cas_zone', 'jcr_zone', 'cas_top', 'cas_sub', 'ccf_tier', 'source', 'updated_at')}
     out['metric_year'] = metric_year_from_extra(v.get('extra_json'))
+    try:
+        extra=json.loads(v.get('extra_json') or '{}')
+        out['metric_sources']=extra.get('metric_evidence',{}) if isinstance(extra,dict) else {}
+    except (TypeError,ValueError):out['metric_sources']={}
     return out
 
 
@@ -48,7 +52,7 @@ def number(value):
 
 def zone_number(value):
     text = str(value or '').strip()
-    match = re.search(r'([1-4])\s*区', text) or re.fullmatch(r'([1-4])', text)
+    match = re.search(r'([1-4])\s*区', text) or re.fullmatch(r'([1-4])', text) or re.search(r'\bQ([1-4])\b',text,re.I)
     return int(match.group(1)) if match else None
 
 def linked_papers(paper_id, direction='references', sort='cited', limit=300):

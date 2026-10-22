@@ -11,6 +11,7 @@ from .db import get_db
 from .graph import compute_clusters
 from .linkview import number, venue_public, zone_number
 from .store import norm_venue, paper_dict
+from . import __version__
 
 router = APIRouter(prefix='/api/research')
 
@@ -41,6 +42,8 @@ class SearchIn(BaseModel):
     year_max: int | None = Field(default=None,ge=1500,le=2200)
     min_if: float | None = Field(default=None,ge=0,le=1000)
     cas_max: int | None = Field(default=None,ge=1,le=4)
+    cas_missing: bool = False
+    zone_scheme: Literal['cas','jcr'] = 'cas'
     limit: int = Field(default=100,ge=1,le=500)
 
 
@@ -78,8 +81,8 @@ def state():
         n = conn.execute('SELECT COUNT(*) n FROM reading_list r JOIN papers p ON p.id=r.paper_id').fetchone()['n']
         jobs = [json.loads(r['payload']) for r in conn.execute('SELECT payload FROM research_jobs ORDER BY rowid DESC LIMIT 5')]
     return {'reading_count':n,'jobs':[{k:j[k] for k in ('id','status','created_at','options','processed','new_records')} for j in jobs],
-            'version':'2.0-competition','method':'本地 TF-IDF 与 LSA 文本排序及引用网络重叠推荐',
-            'data_note':'演示随附公开书目子集；引用边沿用原库来源，未逐条独立核实。'}
+            'version':__version__,'method':'本地 TF-IDF 与 LSA 文本排序及引用网络重叠推荐',
+            'data_note':'数据来自已导入书目与当前拓展任务；来源与补全记录可在文献详情查看。'}
 
 
 @router.post('/explore')
@@ -123,6 +126,7 @@ def search(body:SearchIn):
         citers.setdefault(e['to_id'],set()).add(e['from_id'])
     seeds = set(body.seed_ids)
     output = []
+    facets={'total':0,'if_known':0,'cas_known':0,'jcr_known':0,'cas_zones':{str(i):0 for i in range(1,5)},'jcr_zones':{str(i):0 for i in range(1,5)}}
     query = body.query.casefold().strip()
     for p in papers:
         pid = p['id']
@@ -131,11 +135,18 @@ def search(body:SearchIn):
         if body.scope=='task' and pid not in paths: continue
         if query and body.sort!='relevance' and query not in ' '.join(str(p.get(k) or '') for k in ('title','title_zh','doi','abstract','abstract_zh')).casefold(): continue
         v=p['venue_info'] or {}
-        year,impact,cas = p.get('year'),number(v.get('impact_factor')),zone_number(v.get('cas_zone'))
+        year,impact,cas,jcr = p.get('year'),number(v.get('impact_factor')),zone_number(v.get('cas_zone')),zone_number(v.get('jcr_zone'))
         if body.year_min is not None and (year is None or year<body.year_min): continue
         if body.year_max is not None and (year is None or year>body.year_max): continue
         if body.min_if is not None and (impact is None or impact<body.min_if): continue
-        if body.cas_max is not None and (cas is None or cas>body.cas_max): continue
+        facets['total']+=1
+        if impact is not None:facets['if_known']+=1
+        for key,value in [('cas',cas),('jcr',jcr)]:
+            if value is not None:
+                facets[key+'_known']+=1;facets[key+'_zones'][str(value)]+=1
+        zone=cas if body.zone_scheme=='cas' else jcr
+        if body.cas_missing and zone is not None:continue
+        if body.cas_max is not None and (zone is None or zone>body.cas_max): continue
         sr=sc=0
         network_score=0.
         for sid in seeds-{pid}:
@@ -159,7 +170,7 @@ def search(body:SearchIn):
     ge=[e for e in edges if e['from_id'] in ids and e['to_id'] in ids]
     clusters=compute_clusters(visible,ge)
     for p in visible: p['cluster']=clusters.get(p['id'],0)
-    return {'total':len(output),'shown':len(visible),'papers':visible,'model':model,
+    return {'total':len(output),'shown':len(visible),'papers':visible,'model':model,'facets':facets,
             'edges':[{'from':e['from_id'],'to':e['to_id'],'source':e['src']} for e in ge],
             'metric_note':'IF 和分区属于期刊指标，不是论文质量分；未知值显示未知并排在最后，不按 0 处理；'
                           '设置 IF/分区/年份阈值时，该指标未知的文献会被排除（分区阈值同样排除未知分区）；'

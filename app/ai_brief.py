@@ -78,6 +78,7 @@ log = logging.getLogger("papernet.ai")
 PROMPT_VERSION = "ai_brief_v1"
 # V4R1：字段补全 AI 提供者的提示词版本（登记进 content_provenance.prompt_version）
 ENRICH_FIELD_PROMPT_VERSION = "enrich_field_v1"
+METADATA_FILL_PROMPT_VERSION = "metadata_fill_v1"
 # parallel_v02：源码不再内置私密凭据路径（候选包不得包含私密路径内容）。
 # 凭据文件位置一律通过 PAPERNET_AI_CONFIG_FILE 环境变量注入；未配置时
 # 回退到项目根目录的 ai_config.local.json（不存在则 not_configured）。
@@ -162,7 +163,7 @@ def load_ai_config() -> dict | None:
     base=llm.get('base_url') or ''
     if not isinstance(base,str):return None
     url = llm.get("chat_completions_url") or (base.rstrip("/") + "/chat/completions")
-    key = os.environ.get("PAPERNET_LLM_API_KEY") or llm.get("api_key")
+    key = llm.get('api_key') if isinstance(raw.get('profiles'),list) else (os.environ.get("PAPERNET_LLM_API_KEY") or llm.get("api_key"))
     model = llm.get("model") or DEFAULT_REQUEST_MODEL
     if (not isinstance(key,str) or not key.strip() or len(key)>8192
             or any(ord(ch)<32 or ord(ch)==127 for ch in key)
@@ -216,7 +217,7 @@ def ai_generation_blocked(conn=None, check_config: bool = True) -> dict | None:
 _RETRYABLE_STATUS = {502, 503, 504}
 
 
-def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 2000) -> tuple[str, str]:
+def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 2000, *, timeout=None, retry=True) -> tuple[str, str]:
     """调用模型，返回 (content, 响应 model 名)。至多一次有理由重试。
 
     重试仅限：连接错误/超时/网关 5xx。401/403/429/3xx 不重试。
@@ -242,10 +243,10 @@ def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 
     headers = {"Authorization": "Bearer " + cfg["api_key"],
                "Content-Type": "application/json"}
     last_error: LLMServiceError | None = None
-    for attempt in (1, 2):
+    for attempt in ((1,2) if retry else (1,)):
         try:
             resp = requests.post(cfg["chat_url"], json=payload, headers=headers,
-                                 timeout=LLM_TIMEOUT, allow_redirects=False)
+                                 timeout=timeout or LLM_TIMEOUT, allow_redirects=False)
         except requests.exceptions.Timeout:
             last_error = LLMServiceError("timeout", "模型请求超时，请稍后重试")
             log.warning("AI 请求超时（第 %d 次）", attempt)
@@ -284,7 +285,7 @@ def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 
                 if not isinstance(content, str) or not content.strip():
                     raise LLMServiceError("empty_output", "模型返回了空内容")
                 return content, (resp_model if isinstance(resp_model, str) else "")
-        if attempt == 1:
+        if attempt == 1 and retry:
             time.sleep(1.0)
     raise last_error  # type: ignore[misc]
 

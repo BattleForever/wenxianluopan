@@ -447,8 +447,10 @@ def _field_artifact_validity(cur, paper_id: int, field: str,
     try:
         from . import ai_brief
         enrich_field_prompt_version = ai_brief.ENRICH_FIELD_PROMPT_VERSION
+        metadata_fill_prompt_version = ai_brief.METADATA_FILL_PROMPT_VERSION
     except Exception:  # noqa: BLE001
         enrich_field_prompt_version = "enrich_field_v1"
+        metadata_fill_prompt_version = "metadata_fill_v1"
     if not _table_exists(cur, "content_provenance"):
         return {"validity": "unverifiable", "reasons": ["not_recorded"],
                 "content_hash": None}
@@ -484,8 +486,8 @@ def _field_artifact_validity(cur, paper_id: int, field: str,
     if recorded_hash != current_hash:
         content_reasons.append("source_changed")
     recorded_pv = row["prompt_version"]
-    if recorded_pv is not None and \
-            recorded_pv != enrich_field_prompt_version:
+    accepted_versions={enrich_field_prompt_version,metadata_fill_prompt_version}
+    if recorded_pv is not None and recorded_pv not in accepted_versions:
         content_reasons.append("prompt_version_changed")
     try:
         from . import ai_brief as _ab

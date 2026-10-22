@@ -155,8 +155,9 @@ def _oa_params(extra=None):
     mailto = get_setting("mailto") or ""
     if mailto:
         p["mailto"] = mailto
-    if os.environ.get('OPENALEX_API_KEY'):
-        p['api_key'] = os.environ['OPENALEX_API_KEY']
+    from .private_settings import service_key
+    key=service_key('openalex')
+    if key:p['api_key']=key
     return p
 
 
