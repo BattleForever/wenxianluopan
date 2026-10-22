@@ -152,14 +152,16 @@ quote 选取8–300字符的原文连续片段（原文不足8字符时引用全
     if cancel.is_set():return [],[]
     values=ai_brief._extract_json(content)
     if not isinstance(values,dict):raise ValueError('AI output structure')
-    valid={}
+    valid={};errors=[]
     for f in allowed:
         e=values.get(f);src=title if f=='title_zh' else abstract
-        if not isinstance(e,dict):raise ValueError('missing AI field')
+        if not isinstance(e,dict):
+            errors.append({'source':'AI','field':f,'code':'missing_field','message':'模型未返回此字段，可单独重试'});continue
         text,quote=e.get('text'),e.get('quote')
-        if not isinstance(text,str) or not text.strip() or len(text)>16000:raise ValueError('invalid AI text')
-        if not isinstance(quote,str) or not min(8,len(src))<=len(quote)<=len(src) or quote not in src:raise ValueError('invalid AI quote')
+        if not isinstance(text,str) or not text.strip() or len(text)>16000 or not isinstance(quote,str) or not min(8,len(src))<=len(quote)<=len(src) or quote not in src:
+            errors.append({'source':'AI','field':f,'code':'invalid_field','message':'此字段未通过原文依据校验，未保存'});continue
         valid[f]=(text.strip(),quote,src)
+    if not valid:raise ValueError('No verified AI field')
     with get_db() as c:
         current=dict(c.execute('SELECT * FROM papers WHERE id=?',(pid,)).fetchone())
         if compute_source_hash(current.get('title'),current.get('abstract'))!=digest:raise ValueError('source changed during generation')
@@ -171,10 +173,20 @@ quote 选取8–300字符的原文连续片段（原文不足8字符时引用全
             enrich._persist(c,pid,f,text,'ai_with_source',digest,model=cfg['request_model'],prompt_version=ai_brief.METADATA_FILL_PROMPT_VERSION,input_snapshot=src,generated_at=now())
             record(c,pid,f,'AI 翻译' if f!='summary' else 'AI 概括',None,{'quote':quote,'source_hash':digest,'request_model':cfg['request_model'],'response_model':model,'prompt_version':ai_brief.METADATA_FILL_PROMPT_VERSION})
             filled.append(f)
-    return filled,[]
+    return filled,errors
+
+
+def requested_missing(pid,options):
+    p=paper(pid);missing=raw_missing(p)
+    if options.get('include_metrics'):missing+=missing_metrics(p)
+    if options.get('allow_ai'):
+        with get_db() as c:
+            prov=enrich._provenance_map(c,pid)
+            missing += [f for f in AI if not enrich._field_present(c,p,prov,f)[0]]
+    return list(dict.fromkeys(missing))
 
 def complete_one(pid,options,cancel,memo):
-    p=paper(pid);filled=[];errors=[]
+    p=paper(pid);filled=[];errors=[];initial=requested_missing(pid,options)
     online=options['allow_network'] and not get_bool_setting('offline_mode')
     if raw_missing(p) and online:
         for label,fetch in [('Crossref',lambda:sources.crossref(p.get('doi'))),('OpenAlex',lambda:sources.openalex(p))]:
@@ -228,8 +240,10 @@ def complete_one(pid,options,cancel,memo):
             prov=enrich._provenance_map(c,pid)
             content={f:p.get(f) or (prov.get(f) or {}).get('text') for f in filled}
             sync,_=enrich._enqueue(c,pid,content)
+    missing=requested_missing(pid,options)
     return {'paper_id':pid,'title':p.get('title'),'filled':list(dict.fromkeys(filled)),
-            'still_missing':raw_missing(p),'errors':errors,'sync':sync}
+            'still_missing':missing,'outcome':'partial' if filled and missing else 'filled' if filled else 'already_complete' if not initial else 'not_found',
+            'errors':errors,'sync':sync}
 
 def worker(j,cancel):
     memo={}

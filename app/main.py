@@ -275,32 +275,10 @@ def api_promote(body: IDsIn):
 
 @app.post("/api/papers/{paper_id}/download-pdf")
 def api_download_pdf(paper_id: int):
-    """下载 OA PDF 副本到 PaperNet 自己的数据目录（data/pdfs），不影响任何原文件。"""
-    with get_db() as conn:
-        row = conn.execute("SELECT * FROM papers WHERE id=?", (paper_id,)).fetchone()
-    if not row:
-        raise HTTPException(404, "未找到该文献")
-    if row["local_pdf_path"] and Path(row["local_pdf_path"]).is_file():
-        return {"ok": True, "path": row["local_pdf_path"], "downloaded": False}
-    url = row["oa_pdf_url"]
-    if not url:
-        raise HTTPException(404, "没有可用的 OA PDF 链接")
-    from .netclient import check_scholarly_url
-    if not is_online():
-        raise HTTPException(503, "离线模式，无法下载")
-    check_scholarly_url(url, extra_hosts=PDF_EXTRA_HOSTS)  # 白名单 + OA 仓储
-    import requests as rq
-    resp = rq.get(url, timeout=60, headers={"User-Agent": "PaperNet/0.1"})
-    check_scholarly_url(resp.url, extra_hosts=PDF_EXTRA_HOSTS)  # 重定向终点也须在白名单
-    if resp.status_code != 200 or len(resp.content) < 1000:
-        raise HTTPException(502, f"下载失败 HTTP {resp.status_code}")
-    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", (row["doi"] or f"paper{paper_id}"))[:80]
-    dest = PDF_DIR / f"{safe}.pdf"
-    dest.write_bytes(resp.content)
-    with get_db() as conn:
-        conn.execute("UPDATE papers SET local_pdf_path=? WHERE id=?",
-                     (str(dest), paper_id))
-    return {"ok": True, "path": str(dest), "downloaded": True}
+    """Compatibility endpoint using the validated PDF acquisition path."""
+    from .pdf_access import download, status
+    existed = status(paper_id)["ready"]
+    return {"ok": True, "downloaded": not existed, **download(paper_id)}
 
 
 @app.get("/api/papers/{paper_id}/pdf")
@@ -874,6 +852,8 @@ app.include_router(metadata_jobs.router)
 from . import pdf_guide
 pdf_guide.init()
 app.include_router(pdf_guide.router)
+from . import pdf_access
+app.include_router(pdf_access.router)
 
 from . import workspace
 workspace.init()
@@ -899,6 +879,9 @@ async def stop_trash_maintenance():
 from . import zotero_sync as zotero_sync_module  # B 线（parallel_v03）：Zotero 同步队列与状态接口
 zotero_sync_module.init()
 app.include_router(zotero_sync_module.router)  # 必须在 app.mount("/", StaticFiles...) 之前注册
+from . import zotero_link
+zotero_link.init()
+app.include_router(zotero_link.router)
 
 
 @app.post("/api/library/sync/paper")

@@ -1,18 +1,9 @@
-"""Zotero 本地 API 客户端（B 线 parallel_v03）。
+"""Zotero 本地 API 客户端。
 
-通道核查结论（2026-10 本机实测，Zotero 10.0.3，证据见
-evidence/zotero_channel_check.md）：
-- 读：GET http://127.0.0.1:23119/api/users/0/... 直接可用（3130 items）。
-- 写：本地 API 写端点存在且受控开放，需两道凭据：
-  1. `Zotero-Server-ID` 请求头（值来自任意响应头，防跨进程误写）；
-  2. API key —— 经 `POST /api/local/authorize`（body {"appName": ...}）
-     本地授权获得，Zotero 会在界面弹窗等待用户确认。
-- 另存在 Connector 桥接 `POST /connector/saveItems`（无需 key），但只写入
-  Zotero 当前选中集合、无法指定目标集合，不用于受控写回，仅作探测。
-- 绝不直接 SQL 写 zotero.sqlite（硬红线）。
-
-API key 只经环境变量 PAPERNET_ZOTERO_API_KEY（服务端注入）或内存中的
-authorize() 流程获取，不写入源码/日志/JSON/交付。
+读取本机书目与集合；写入需桌面授权及 Zotero-Server-ID。
+密钥可由环境变量提供，或由网页授权流程保存在用户数据目录的
+private/zotero.local.json。源码、运行日志和接口返回均不包含密钥值。
+不直接修改 Zotero 数据库。
 """
 
 from __future__ import annotations
@@ -189,6 +180,9 @@ class ZoteroClient:
         sid = resp_headers.get("Zotero-Server-ID")
         if sid:
             self._server_id = sid
+        if path == AUTHORIZE_PATH and status >= 400:
+            # Authorization response bodies may contain credentials even on errors.
+            raise ZoteroError(f"Zotero 本地授权未完成（HTTP {status}），请重新连接")
         if status == 401:
             raise ZoteroAuthRequired("Zotero 本地 API 要求 API key（401）；"
                                      "请先本地授权获取 key")
@@ -258,9 +252,12 @@ class ZoteroClient:
         return data or []
 
     def get_collections(self) -> list[dict]:
-        _, _, data = self._request(
-            "GET", "/api/users/0/collections?limit=100&format=json")
-        return data or []
+        result=[]
+        for start in range(0,10000,100):
+            _, _, data = self._request('GET',f'/api/users/0/collections?limit=100&format=json&start={start}')
+            batch=data or [];result.extend(batch)
+            if len(batch)<100:return result
+        raise ZoteroError('集合数量超过当前支持上限，请减少集合数量后重试')
 
     def find_by_identifier(self, doi: str | None = None,
                            title: str | None = None) -> dict | None:

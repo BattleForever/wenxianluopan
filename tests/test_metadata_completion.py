@@ -89,6 +89,16 @@ class Completion(unittest.TestCase):
   with patch.object(ai_brief,'load_ai_config',return_value=CFG),patch.object(ai_brief,'call_llm',return_value=(json.dumps(response),'model')):
    with self.assertRaises(ValueError):m.ai_fill(self.pid,threading.Event())
   self.assertIsNone(m.paper(self.pid)['title_zh'])
+ def test_one_invalid_ai_field_does_not_discard_verified_other_fields(self):
+  p=m.paper(self.pid);response={f:{'text':'测试内容','quote':p['title'] if f=='title_zh' else TEXT[:30]} for f in m.AI}
+  response['summary']['quote']='fabricated quote not present'
+  with patch.object(ai_brief,'load_ai_config',return_value=CFG),patch.object(ai_brief,'call_llm',return_value=(json.dumps(response),'model')):
+   fields,errors=m.ai_fill(self.pid,threading.Event())
+  self.assertEqual(set(fields),{'title_zh','abstract_zh'});self.assertEqual(errors[0]['field'],'summary')
+  self.assertTrue(m.paper(self.pid)['title_zh'])
+ def test_still_missing_accounts_for_requested_metrics_and_ai(self):
+  fields=m.requested_missing(self.pid,self.opts(allow_ai=True,include_metrics=True))
+  self.assertIn('abstract_zh',fields);self.assertIn('cas_zone',fields)
  def test_long_verbatim_evidence_is_not_rejected_as_fabricated(self):
   text=TEXT*8
   with get_db() as c:c.execute('UPDATE papers SET abstract=? WHERE id=?',(text,self.pid))

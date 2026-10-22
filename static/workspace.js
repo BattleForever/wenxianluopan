@@ -1,7 +1,7 @@
 'use strict';
 const $=id=>document.getElementById(id);
 const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const state={page:'explore',seeds:new Map(),pending:new Map(),selected:new Set(),data:null,job:null,view:'graph',detail:null,detailTab:'overview',linkSort:'cited',cy:null,request:0,offset:0,loading:false};
+const state={page:'explore',seeds:new Map(),pending:new Map(),selected:new Set(),data:null,job:null,view:'graph',detail:null,detailTab:'overview',linkSort:'cited',cy:null,request:0,offset:0,loading:false,graphPinned:null,detailPinned:false};
 let toastTimer, seedTimer, detailRequest=0, graphFrame;
 const currentYear=new Date().getFullYear();
 function toast(message,error=false){$('toast').textContent=message;$('toast').classList.toggle('error',error);$('toast').hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>$('toast').hidden=true,6500);}
@@ -76,16 +76,17 @@ function drawGraph(){
   {selector:'edge',style:{width:1.15,'line-color':'#63809d','target-arrow-color':'#8faecb','target-arrow-shape':'triangle','arrow-scale':1.15,'curve-style':'bezier','control-point-step-size':42,opacity:.3}},
   {selector:'edge.reference',style:{'line-color':'#54b8ff','target-arrow-color':'#83ccff',width:1.65,opacity:.88,'arrow-scale':1.35}},
   {selector:'edge.citing',style:{'line-color':'#ffb66e','target-arrow-color':'#ffd09c',width:1.65,opacity:.9,'arrow-scale':1.35}},
+  {selector:'node.pinned',style:{'border-width':4,'border-color':'#def9ff'}},
   {selector:'node:selected',style:{'border-width':4,'border-color':'#6cb2ef'}},
   {selector:'.dim',style:{opacity:.1}},
   {selector:'node.focus',style:{opacity:1}},
   {selector:'edge.focus',style:{opacity:1,width:2.3,'arrow-scale':1.6}}
  ],layout:{name:'preset',fit:false},minZoom:.08,maxZoom:3,wheelSensitivity:.25});
- spreadGraph(state.cy);const seed=()=>state.cy.nodes('.seed').first();highlightGraph(seed());
- state.cy.on('tap','node',guarded(async e=>openDetail(Number(e.target.id()))));
- state.cy.on('tap',e=>{if(e.target===state.cy)closeDetail();});
- state.cy.on('mouseover','node',e=>{highlightGraph(e.target,true);graphTooltip(e.target);});
- state.cy.on('mouseout','node',()=>{highlightGraph(seed());$('graph-tooltip').hidden=true;});
+ spreadGraph(state.cy);const seed=()=>state.cy.nodes('.seed').first();const pinned=()=>state.graphPinned?state.cy.getElementById(state.graphPinned):null;const paint=()=>{state.cy.nodes().removeClass('pinned');const n=pinned();if(n?.length){n.addClass('pinned');highlightGraph(n,true);}else{state.graphPinned=null;highlightGraph(seed());}};paint();
+ state.cy.on('tap','node',guarded(async e=>{state.graphPinned=e.target.id();paint();await openDetail(Number(e.target.id()));}));
+ state.cy.on('tap',e=>{if(e.target===state.cy){state.graphPinned=null;paint();if(!state.detailPinned)closeDetail();}});
+ state.cy.on('mouseover','node',e=>{if(!state.graphPinned)highlightGraph(e.target,true);graphTooltip(e.target);});
+ state.cy.on('mouseout','node',()=>{paint();$('graph-tooltip').hidden=true;});
  state.cy.on('pan zoom',()=>$('graph-tooltip').hidden=true);
 }
 function setView(view){state.view=view;$('graph-wrap').hidden=view!=='graph';$('list-wrap').hidden=view!=='list';for(const item of ['graph','list']){$(`${item}-view`).classList.toggle('active',item===view);$(`${item}-view`).setAttribute('aria-pressed',item===view?'true':'false');}$('fit-graph').hidden=view!=='graph';if(view==='graph')requestAnimationFrame(drawGraph);}
@@ -202,9 +203,7 @@ document.addEventListener('click',guarded(async event=>{const target=event.targe
   catch(error){toast('AI 速览调用失败：'+error.message,true);if(!detailDialog.open)detailDialog.showModal();}
   break;}case 'detail-seed':if(state.seeds.size>=10&&!state.seeds.has(state.detail.id))throw new Error('最多选择 10 篇种子。');state.seeds.set(state.detail.id,state.detail);renderSeeds();toast('已加入扩展种子');break;case 'detail-promote':await api('/api/papers/promote',{ids:[state.detail.id]});state.detail.status='library';renderDetail();await refreshCounts();toast('已保存到文献库');break;case 'save-note':await saveReading([state.detail.id],'add',$('reading-note').value);state.detail.in_reading_list=true;state.detail.reading_note=$('reading-note').value;renderDetail();break;
  case 'detail-enrich':window.WenxianEnrichment?.open({ids:[state.detail.id],single:true});break;
- case 'detail-zflush':{target.disabled=true;try{// V4R1-06/R2-02：单篇同步入口 /api/library/sync/paper——普通未入队论文从本按钮发起同步（enqueue → 仅该篇 flush）；旧 /api/library/sync/flush 保留批量/重试语义，不再由本按钮调用
-   const resp=await api('/api/library/sync/paper',{paper_id:state.detail.id});
-   renderFlushResult(resp);await refreshDetailSyncStatus();}finally{target.disabled=false;}break;}
+ case 'detail-zflush':await window.WenxianZotero?.open(state.detail.id);break;
  case 'save-settings':await api('/api/settings',{values:{offline_mode:$('offline-mode').checked?'1':'0',zotero_enabled:$('zotero-enabled').checked?'1':'0',mailto:$('mailto').value.trim()}});await refreshCounts();toast('设置已保存');break;
  case 'import-btn':{const kind=$('import-format').value;const text=$('import-content').value.trim();if(!text)throw new Error('请先填写导入内容。');target.disabled=true;try{const body=kind==='standard'?{papers_text:text,citations_text:$('import-citations').value,venues_text:$('import-venues').value}:kind==='pdf-folder'?{path:text}:{text};const result=await api('/api/import/'+kind,body);$('import-result').hidden=false;$('import-result').textContent=JSON.stringify(result,null,2);await refreshCounts();toast('导入已处理，请核对结果中的失败或未解析条目。');}finally{target.disabled=false;}break;}
  case 'zotero-sync':target.disabled=true;try{const result=await api('/api/zotero/sync',{});toast(`Zotero 同步完成：新增 ${result.added} 条，失败 ${result.errors.length} 条`);await refreshCounts();}finally{target.disabled=false;}break;
@@ -214,7 +213,7 @@ $('seed-search').addEventListener('input',()=>{clearTimeout(seedTimer);seedTimer
 window.addEventListener('resize',scheduleGraph);document.querySelector('.advanced-box').addEventListener('toggle',scheduleGraph);new ResizeObserver(scheduleGraph).observe(document.querySelector('.result-toolbar'));new ResizeObserver(scheduleGraph).observe(document.querySelector('.result-footer'));
 $('close-advanced').onclick=()=>document.querySelector('.advanced-box').open=false;
 document.addEventListener('pointerdown',e=>{if(!e.target.closest('.advanced-box'))document.querySelector('.advanced-box').open=false;});
-document.addEventListener('pointerdown',e=>{if($('detail-dialog').open&&!e.target.closest('#detail-dialog,.pg-dialog,.wnai-overlay,dialog[open]:not(#detail-dialog)'))closeDetail();});
+document.addEventListener('pointerdown',e=>{if($('detail-dialog').open&&!state.detailPinned&&!e.target.closest('#detail-dialog,#detail-toggle,.pg-dialog,.wnai-overlay,dialog[open]:not(#detail-dialog)'))closeDetail();});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){if($('detail-dialog').open)closeDetail();document.querySelector('.advanced-box').open=false;}});
 for(const id of ['year-min','year-max'])$(id).addEventListener('input',()=>{$('year-enabled').checked=true;});$('year-max').value=currentYear;
 window.addEventListener('wenxian-data-updated',guarded(async()=>{const id=$('detail-dialog').open?state.detail?.id:null;await refreshCounts();await loadResults();if(id)await openDetail(id);}));
@@ -224,3 +223,11 @@ window.WenxianWorkbench={get loading(){return state.loading},get page(){return s
  select(ids){state.selected=new Set(ids);$('select-all').checked=!!state.data?.papers.length&&state.data.papers.every(p=>state.selected.has(p.id));updateSelection();},
  async turnPage(delta){state.offset=Math.max(0,(state.offset||0)+delta*(state.data?.limit||50));await loadResults(false);$('list-wrap').scrollTop=0;}
 };
+
+document.addEventListener('pointerdown',e=>{if(!state.graphPinned||e.target.closest('#graph'))return;state.graphPinned=null;state.cy?.nodes().removeClass('pinned');highlightGraph(state.cy?.nodes('.seed').first());});
+
+const detailToggle=document.createElement('button');detailToggle.id='detail-toggle';detailToggle.className='secondary small';detailToggle.textContent='文献详情';detailToggle.setAttribute('aria-controls','detail-dialog');detailToggle.setAttribute('aria-expanded','false');document.querySelector('.topbar>div').prepend(detailToggle);
+const detailPin=document.createElement('button');detailPin.id='detail-pin';detailPin.className='detail-pin';detailPin.textContent='固定详情';detailPin.setAttribute('aria-pressed','false');$('detail-dialog').querySelector('.dialog-heading').insertBefore(detailPin,$('detail-dialog').querySelector('[data-close]'));
+detailPin.onclick=()=>{state.detailPinned=!state.detailPinned;detailPin.textContent=state.detailPinned?'已固定':'固定详情';detailPin.setAttribute('aria-pressed',String(state.detailPinned));};
+detailToggle.onclick=guarded(async()=>{if($('detail-dialog').open)closeDetail();else if(state.detail)await openDetail(state.detail.id);else toast('请先点击一篇文献查看详情。');});
+new MutationObserver(()=>{const open=$('detail-dialog').open;detailToggle.setAttribute('aria-expanded',String(open));detailToggle.classList.toggle('active',open);detailToggle.textContent=open?'收起详情':'文献详情';}).observe($('detail-dialog'),{attributes:true,attributeFilter:['open']});

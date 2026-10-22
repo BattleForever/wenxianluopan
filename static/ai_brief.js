@@ -5,7 +5,7 @@
    F1 修复（parallel_v02 B 线）：
    - 面板内部拆分为三个独立区域：来源区（原文摘要）、动作区（生成/重新生成按钮）、
      结果区（速览内容）。任一状态切换只更新自己的区域，绝不清空其他区域。
-   - 论文信息取得后立即渲染动作区：新论文打开即有可点击的"生成 AI 速览"按钮。
+   - 论文信息取得后立即渲染动作区：新论文打开即有可点击的"生成速览"按钮。
 
    F2 修复（parallel_v02 B 线，方案：关闭详情再开 AI，关闭 AI 后返回详情）：
    - workspace.js 在调用 open() 前先关闭原生 <dialog> 详情弹窗（opts.returnTo），
@@ -35,7 +35,7 @@
     if (styleLoaded) return;
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/ai_brief.css?v=3.0';
+    link.href = '/ai_brief.css?v=0.11.0';
     document.head.appendChild(link);
     styleLoaded = true;
   }
@@ -65,7 +65,7 @@
   }
 
   var STATUS_TEXT = {
-    ready: '已有 AI 速览', not_generated: '尚未生成 AI 速览',
+    ready: '已有 AI 速览', not_generated: '尚未生成速览',
     missing_source: '缺少摘要，无法生成', unavailable: '暂时不可用',
     failed: '生成失败'
   };
@@ -86,15 +86,15 @@
   var CODE_TEXT = {
     missing_source: '该论文缺少摘要。AI 速览仅依据论文现有摘要生成，不依据题名猜测，请先补全摘要。',
     offline_mode: '当前为离线模式：不产生新的外部请求。已有有效缓存会在下方显示。',
-    not_configured: '校内模型配置不可用（未找到配置或密钥），无法生成。',
-    auth_failed: '校内模型鉴权失败（401/403）。请检查本地配置中的密钥，已停止重试。',
-    rate_limited: '校内模型限流（429），请稍后重试。',
-    timeout: '校内模型请求超时，请稍后重试。',
-    network_error: '无法连接校内模型网关，请检查网络后重试。',
-    redirect_blocked: '校内模型网关返回重定向，已按安全策略阻止。',
-    service_error: '校内模型服务错误，请稍后重试。',
-    invalid_response: '校内模型返回了无法解析的响应。',
-    empty_output: '校内模型返回了空内容。',
+    not_configured: '模型服务配置不可用（未找到配置或密钥），无法生成。',
+    auth_failed: '模型服务鉴权失败（401/403）。请检查本地配置中的密钥，已停止重试。',
+    rate_limited: '模型服务限流（429），请稍后重试。',
+    timeout: '模型服务请求超时，请稍后重试。',
+    network_error: '无法连接模型服务网关，请检查网络后重试。',
+    redirect_blocked: '模型服务网关返回重定向，已按安全策略阻止。',
+    service_error: '模型服务服务错误，请稍后重试。',
+    invalid_response: '模型服务返回了无法解析的响应。',
+    empty_output: '模型服务返回了空内容。',
     invalid_model_output: '模型输出无法按固定结构解析或缺少必需字段，已拒绝显示。'
   };
   var ELEMENT_LABELS = {
@@ -110,22 +110,22 @@
     var dialog = h('div', 'wnai-dialog');
     var header = h('div', 'wnai-header');
     var titleBox = h('div');
-    titleBox.appendChild(h('h2', null, 'AI 速览 · 依据摘要'));
+    titleBox.appendChild(h('h2', null, 'AI 速览'));
     header.appendChild(titleBox);
     var closeBtn = h('button', 'wnai-close', '×');
     closeBtn.setAttribute('aria-label', '关闭 AI 速览');
     header.appendChild(closeBtn);
-    var banner = h('div', 'wnai-banner', '⚠ AI 生成，依据摘要，需核对原文 —— 本面板内容不是已阅读全文的结论。');
+    var banner = h('div', 'wnai-banner', '依据摘要生成 · 可展开原文依据核对');
     var status = h('div', 'wnai-status');
     var errorBox = h('div', 'wnai-error');
     errorBox.hidden = true;
     // F1：三个独立区域，互不清空
-    var sourceSec = h('div', 'wnai-section');
+    var sourceSec = h('details', 'wnai-section wnai-source');
     var genSec = h('div', 'wnai-section wnai-gen');
     var resultSec = h('div', 'wnai-section');
     dialog.appendChild(header); dialog.appendChild(banner);
     dialog.appendChild(status); dialog.appendChild(errorBox);
-    dialog.appendChild(sourceSec); dialog.appendChild(genSec); dialog.appendChild(resultSec);
+    var body=h('div','wnai-body');body.appendChild(genSec);body.appendChild(resultSec);body.appendChild(sourceSec);dialog.appendChild(body);
     overlay.appendChild(dialog);
     document.body.appendChild(overlay);
     overlay.addEventListener('click', function (e) { if (e.target === overlay) close(); });
@@ -174,13 +174,13 @@
     var btn = current.genBtn;
     if (!btn || current.pending) return;
     btn.disabled = false;
-    btn.textContent = current.lastStatus === 'ready' ? '重新生成 AI 速览' : '生成 AI 速览';
+    btn.textContent = current.lastStatus === 'ready' ? '更新速览' : '生成速览';
   }
 
   function renderSource(paper) {
     var sec = els.sourceSec;
     sec.textContent = '';
-    sec.appendChild(h('h3', null, '论文与原始信息（本地库内数据）'));
+    sec.appendChild(h('summary', null, '查看原始题名与摘要'));sec.open=false;
     // C 线 parallel_v03：原文题名 / 中文题名 / 原文摘要 / 中文摘要 / 已有总结分区展示，
     // 中文内容的复用来源标注（§3.1）由 existing 端点或 brief.reuse 提供时显示。
     var fieldTitle = h('div', 'wnai-field');
@@ -206,7 +206,7 @@
     if (paper.abstract_zh && paper.abstract_zh !== paper.abstract) {
       var fieldAbsZh = h('div', 'wnai-field');
       fieldAbsZh.id = 'wnai-field-abstract-zh';
-      fieldAbsZh.appendChild(h('span', 'wnai-field-label', '中文摘要（沿用已有数据，非本程序翻译）'));
+      fieldAbsZh.appendChild(h('span', 'wnai-field-label', '已有中文摘要'));
       var boxZh = h('div', 'wnai-abstract wnai-abstract-zh');
       boxZh.textContent = paper.abstract_zh;
       fieldAbsZh.appendChild(boxZh);
@@ -268,23 +268,23 @@
     sec.textContent = '';
     // F4：按接口契约准确说明发送范围（题名+摘要）
     sec.appendChild(h('p', null,
-      '点击"生成 AI 速览"后，将把本篇论文的题名与摘要发送到校内模型（modelgateway.zju.edu.cn），用于题名翻译与摘要四要素概括；不发送 DOI、内部 ID 或其他库内字段。'));
+      '根据题名和摘要，生成中文概览与研究要点。'));
     var row = h('div');
-    var btn = h('button', null, current.lastStatus === 'ready' ? '重新生成 AI 速览' : '生成 AI 速览');
+    var btn = h('button', null, current.lastStatus === 'ready' ? '更新速览' : '生成速览');
     btn.id = 'wnai-generate-btn';
     btn.setAttribute('aria-label', '生成本篇论文的 AI 速览');
     var forceLabel = h('label', 'wnai-force');
     var forceChk = document.createElement('input');
     forceChk.type = 'checkbox'; forceChk.id = 'wnai-force';
     forceLabel.appendChild(forceChk);
-    forceLabel.appendChild(document.createTextNode('忽略缓存强制重新生成'));
-    row.appendChild(btn); row.appendChild(forceLabel);
+    forceLabel.appendChild(document.createTextNode('强制重新生成'));
+    row.appendChild(btn);var settings=h('details','wnai-generation-options');settings.appendChild(h('summary',null,'生成选项'));settings.appendChild(forceLabel);settings.appendChild(h('p',null,'仅将本篇题名与摘要发送到当前配置的模型。'));row.appendChild(settings);
     sec.appendChild(row);
     btn.addEventListener('click', async function () {
       if (current.pending) return; // 请求进行中禁止重复发起
       current.pending = true;
       btn.disabled = true;
-      btn.textContent = '生成中…（已发送题名与摘要到校内模型）';
+      btn.textContent = '正在生成…';
       els.errorBox.hidden = true;
       var myToken = current.token;
       async function restoreOldResult() {
@@ -298,7 +298,7 @@
       try {
         var data = await api('/api/ai/briefs', {
           paper_id: current.paperId, source_kind: 'abstract',
-          force: forceChk.checked
+          force: forceChk.checked || current.lastStatus === 'ready'
         });
         if (myToken !== current.token) return; // 面板已切换到别的论文，丢弃晚到响应
         applyState(data);
@@ -345,8 +345,8 @@
   function renderContentStatus(data, brief) {
     var X = window.WenxianExisting;
     var fields = reuseFieldsMap(data);
-    var sec = h('div', 'wnai-section wnai-content-status');
-    sec.appendChild(h('h3', null, '内容状态说明（按库内已保存产物）'));
+    var sec = h('details', 'wnai-section wnai-content-status');
+    sec.appendChild(h('summary', null, '内容来源'));
     var hasAny = false;
     if (fields && typeof fields === 'object') {
       Object.keys(fields).forEach(function (name) {
@@ -383,7 +383,7 @@
 
   function renderBrief(brief, cached, stale, data) {
     var sec = h('div', 'wnai-section');
-    sec.appendChild(h('h3', null, '双语速览'));
+    sec.appendChild(h('h3', null, '研究概览'));
     var biling = h('div', 'wnai-biling');
     function kv(kind, text, reuseField) {
       var rowEl = h('div', 'wnai-kv');
@@ -399,12 +399,12 @@
     }
     biling.appendChild(kv('题名 · 翻译', brief.title_zh, 'title_zh'));
     biling.appendChild(kv('摘要 · 中文概括', brief.abstract_zh, 'abstract_zh'));
-    biling.appendChild(kv('摘要 · 英文概括', brief.abstract_en, 'abstract_en'));
+    var english=h('details','wnai-english');english.appendChild(h('summary',null,'英文概括'));english.appendChild(kv('English',brief.abstract_en,'abstract_en'));biling.appendChild(english);
     sec.appendChild(biling);
     els.resultSec.appendChild(sec);
 
     var sec2 = h('div', 'wnai-section');
-    sec2.appendChild(h('h3', null, '四要素（每项附原文引用）'));
+    sec2.appendChild(h('h3', null, '研究要点'));
     Object.keys(ELEMENT_LABELS).forEach(function (name) {
       var item = brief.elements && brief.elements[name];
       var box = h('div', 'wnai-elem');
@@ -413,18 +413,16 @@
       var zh = h('p');
       zh.textContent = item.zh || '摘要未提供';
       box.appendChild(zh);
-      box.appendChild(h('p', 'wnai-en', item.en || ''));
+      var en=h('details','wnai-english');en.appendChild(h('summary',null,'英文表述'));en.appendChild(h('p','wnai-en',item.en||''));box.appendChild(en);
       if (item.quote_verified && item.quote) {
-        var q = h('div', 'wnai-quote');
+        var q = h('details', 'wnai-quote');q.appendChild(h('summary',null,'原文依据'));
         q.appendChild(document.createTextNode('原文引用：' + item.quote));
         var loc = h('button', null, '定位');
         loc.setAttribute('aria-label', '在上方原始摘要中定位该引用');
         loc.addEventListener('click', function () { highlightQuote(item.quote, brief.source_snapshot_raw); });
         q.appendChild(loc);
         if (typeof item.quote_start === 'number')
-          q.appendChild(document.createTextNode(
-            '　[位置 ' + item.quote_start + '–' + item.quote_end +
-            '，按 Unicode 码点索引，0 起，含头不含尾]'));
+          loc.title='摘要位置 '+item.quote_start+'–'+item.quote_end;
         box.appendChild(q);
       } else if (item.quote) {
         box.appendChild(h('div', 'wnai-noquote',
@@ -439,7 +437,7 @@
     if (brief.warnings && brief.warnings.length) {
       els.resultSec.appendChild(h('div', 'wnai-warning', '校验提示：' + brief.warnings.join('；')));
     }
-    var meta = h('div', 'wnai-meta');
+    var meta = h('details', 'wnai-meta');
     meta.textContent = '请求模型：' + (brief.request_model || '未知') +
       ' · 响应模型：' + (brief.response_model || '未知') +
       ' · prompt 版本：' + (brief.prompt_version || '未知') +
@@ -448,7 +446,7 @@
       (cached ? ' · 缓存命中' : ' · 本次新生成') +
       (stale ? ' · 结果已过期（对应旧来源快照）' : '') +
       ' · 输入哈希：' + (brief.source_hash || '未知').slice(0, 16) + '…';
-    els.resultSec.appendChild(meta);
+    var metadata=h('p',null,meta.textContent);meta.textContent='';meta.appendChild(h('summary',null,'生成信息'));meta.appendChild(metadata);els.resultSec.appendChild(meta);
     // V4-08：内容状态说明（五分类）+ 与生成状态一致的总结注记
     renderContentStatus(data, brief);
   }
@@ -457,7 +455,7 @@
   // 优先在当前摘要中定位；找不到时回退显示生成时快照再定位（含原始空白）。
   function highlightQuote(quote, snapshotRaw) {
     var box = document.getElementById('wnai-source-abstract');
-    if (!box) return;
+    if (!box) return;els.sourceSec.open=true;
     var basis = current.abstract;
     var usingSnapshot = false;
     if ((!basis || basis.indexOf(quote) < 0) &&
@@ -489,7 +487,7 @@
   // opts.keepError：恢复旧结果展示时保留已有错误信息
   function applyState(data, opts) {
     current.lastStatus = data.status || current.lastStatus;
-    var nodes = [h('span', null, '状态：' + (STATUS_TEXT[data.status] || data.status))];
+    var nodes = [h('span', null, STATUS_TEXT[data.status] || data.status)];
     if (data.status === 'ready') {
       nodes.push(h('span', 'wnai-badge ' + (data.cached ? 'cached' : 'fresh'),
         data.cached ? '缓存结果' : '本次新生成'));
@@ -510,10 +508,10 @@
     } else if (data.status === 'not_generated') {
       showError(null);
       els.resultSec.appendChild(h('p', 'wnai-muted',
-        '尚无 AI 速览结果。点击上方"生成 AI 速览"按钮开始生成。'));
+        '尚无 AI 速览结果。点击上方"生成速览"按钮开始生成。'));
     } else if (data.status === 'missing_source') {
       els.resultSec.appendChild(h('p', 'wnai-muted',
-        '缺少摘要：请先在库内补全本篇论文的摘要元数据，再生成 AI 速览。'));
+        '缺少摘要：请先在库内补全本篇论文的摘要元数据，再生成速览。'));
     } else if (data.status === 'unavailable' || data.status === 'failed') {
       els.resultSec.appendChild(h('p', 'wnai-muted',
         '本次未能生成结果；上方错误信息会保留，可重试。'));
