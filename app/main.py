@@ -31,6 +31,23 @@ init_db()
 
 app = FastAPI(title="文献罗盘", version=__version__, docs_url=None, redoc_url=None)
 
+from . import workspace_data
+app.include_router(workspace_data.router)
+
+@app.middleware('http')
+async def workspace_transfer_guard(request, call_next):
+    api_request = request.url.path.startswith('/api/')
+    exempt = request.url.path in ('/api/health', '/api/workspace/state')
+    if api_request and not exempt:
+        if workspace_data.BUSY.is_set() or getattr(app.state, 'workspace_switching', False):
+            return JSONResponse(status_code=503, content={'detail': '工作空间正在备份或切换，请稍候。'})
+        app.state.workspace_requests = getattr(app.state, 'workspace_requests', 0) + 1
+    try:
+        return await call_next(request)
+    finally:
+        if api_request and not exempt:
+            app.state.workspace_requests -= 1
+
 
 # ------------------------------------------------------------------ models
 
@@ -929,4 +946,6 @@ def _open_browser():
 
 if __name__ == "__main__":
     threading.Thread(target=_open_browser, daemon=True).start()
-    uvicorn.run(app, host=HOST, port=PORT, log_level="warning")
+    server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, log_level="warning"))
+    app.state.stop_server = lambda: setattr(server, 'should_exit', True)
+    server.run()

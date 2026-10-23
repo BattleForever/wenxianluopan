@@ -25,14 +25,16 @@ function renderMetricAvailability(f){
  const box=$('metric-availability');box.hidden=total===0;box.innerHTML=`<span>IF 已知 ${f.if_known}/${total} · ${scheme==='cas'?'中科院':'JCR'}分区已知 ${known}/${total}${known===0?' · 当前缺少分区，可补全指标或查看缺失项':''}</span><button id="fill-metrics">补全期刊指标 →</button>`;
 }
 function updateSelection(){$('selection-count').textContent=state.selected.size?`已选择 ${state.selected.size} 篇文献`:`当前 ${state.data?.shown||0} 篇 · 可直接导出；勾选后仅导出所选`;$('add-selected').disabled=!state.selected.size;window.WenxianOrganizer?.onSelection();}
-function sizeGraph(){const el=$('graph'),footer=document.querySelector('.result-footer');const height=Math.max(200,window.innerHeight-el.getBoundingClientRect().top-(footer?.getBoundingClientRect().height||56)-18);if(Math.abs(el.clientHeight-height)>1)el.style.height=height+'px';return height;}
-function fitGraph(feedback=false){if(!state.cy||state.view!=='graph')return;sizeGraph();state.cy.resize();state.cy.elements().unselect();state.cy.fit(state.cy.elements(),38);if(feedback)toast('已适配 '+state.cy.nodes().length+' 篇文献');}
+function sizeGraph(){const el=$('graph'),footer=document.querySelector('.result-footer');const height=Math.max(320,window.innerHeight-el.getBoundingClientRect().top-(footer?.getBoundingClientRect().height||56)-18);if(Math.abs(el.clientHeight-height)>1)el.style.height=height+'px';return height;}
+function fitGraph(feedback=false){if(!state.cy||state.view!=='graph')return;sizeGraph();state.cy.resize();const aspect=$('graph').clientWidth/$('graph').clientHeight;if(!state.cy.layoutAspect||Math.abs(Math.log(aspect/state.cy.layoutAspect))>.06)spreadGraph(state.cy);else state.cy.fit(state.cy.nodes(),42);if(feedback)toast('已适配 '+state.cy.nodes().length+' 篇文献');}
 function scheduleGraph(){cancelAnimationFrame(graphFrame);graphFrame=requestAnimationFrame(()=>{if(state.cy&&state.view==='graph'&&!$('workspace-page').hidden)fitGraph();});}
 function closeDetail(){++detailRequest;const d=$('detail-dialog');if(d.open)d.close();}
 function spreadGraph(cy){
  const el=$('graph');sizeGraph();cy.resize();
  const ns=cy.nodes();if(ns.length<2){cy.fit(null,55);return;}
- const W=el.clientWidth,H=el.clientHeight,padX=70,padY=45;
+ // Lay out in a virtual canvas. Never squeeze fixed-size nodes into screen bounds.
+ const aspect=Math.max(.35,el.clientWidth/Math.max(200,el.clientHeight));cy.layoutAspect=aspect;
+ const area=ns.length*78*78,W=Math.sqrt(area*aspect),H=Math.sqrt(area/aspect),padX=0,padY=0;
  // Uniform area distribution prevents strongly connected nodes collapsing together.
  const seedIndex=Math.max(0,ns.toArray().findIndex(n=>n.hasClass('seed')));
  let rank=0;const cx=W/2,cy0=H/2,rx=(W-2*padX)/2,ry=(H-2*padY)/2;
@@ -41,17 +43,16 @@ function spreadGraph(cy){
   rank++;const r=Math.sqrt((rank-.25)/(ns.length-.5)),angle=rank*2.399963229728653;
   return {x:cx+rx*r*Math.cos(angle),y:cy0+ry*r*Math.sin(angle)};
  });
- const gap=Math.max(32,Math.min(ns.length>150?42:ns.length>80?52:66,Math.sqrt((W-2*padX)*(H-2*padY)/ns.length)*.8));
- for(let pass=0;pass<100;pass++){
+ const gap=64;
+ for(let pass=0;pass<65;pass++){
   let moved=false;
   for(let i=0;i<pts.length;i++)for(let j=i+1;j<pts.length;j++){
    let dx=pts[j].x-pts[i].x,dy=pts[j].y-pts[i].y,d=Math.hypot(dx,dy);
    if(d<gap){if(d<.01){dx=Math.cos(i*2.399);dy=Math.sin(i*2.399);d=1;}const push=(gap-d)*.51;pts[i].x-=dx/d*push;pts[i].y-=dy/d*push;pts[j].x+=dx/d*push;pts[j].y+=dy/d*push;moved=true;}
   }
-  pts.forEach(p=>{p.x=Math.max(padX,Math.min(W-padX,p.x));p.y=Math.max(padY,Math.min(H-padY,p.y));});
   if(!moved)break;
  }
- cy.batch(()=>ns.forEach((n,i)=>n.position(pts[i])));cy.fit(null,30);
+ cy.batch(()=>ns.forEach((n,i)=>n.position(pts[i])));cy.fit(ns,42);
 }
 function graphMetric(p,mode){if(mode==='cited')return p.cited_by_count==null?null:Number.isFinite(Number(p.cited_by_count))?Number(p.cited_by_count):null;if(mode==='year')return p.year==null?null:Number(p.year);const v=p.venue_info?.impact_factor;if(v==null||v==='')return null;const n=Number(v);return Number.isFinite(n)?n:null;}
 function colorScale(papers){const mode=$('graph-color')?.value||'cited',names={cited:'被引数',impact_factor:'期刊影响因子',year:'发表年份',cluster:'网络分组'};

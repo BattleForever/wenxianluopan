@@ -14,6 +14,28 @@ ROOT = Path(__file__).resolve().parent
 IMPORT_CHECK = 'import fastapi,uvicorn,requests,networkx,bibtexparser,fitz,sklearn'
 
 
+def resolve_workspace(value):
+    path = Path(value).resolve()
+    visited = set()
+    for _ in range(12):
+        if path in visited:
+            raise RuntimeError('工作空间迁移记录存在循环，请检查本机目录配置。')
+        visited.add(path)
+        pointer = path / 'private' / 'relocation.local.json'
+        if not pointer.exists():
+            return path
+        try:
+            info = json.loads(pointer.read_text(encoding='utf-8'))
+            raw_target = Path(info['target'])
+            target = raw_target.resolve()
+            if not raw_target.is_absolute() or not (target/'papernet.db').is_file() or info.get('data_id') != data_identity(target):
+                raise ValueError()
+        except (OSError, ValueError, KeyError, TypeError):
+            raise RuntimeError('迁移后的工作空间不可用；原数据仍保留，请检查目标目录。')
+        path = target
+    raise RuntimeError('工作空间迁移记录过多，请检查本机目录配置。')
+
+
 def ensure_runtime(data_dir):
     explicit = os.environ.get('PAPERNET_PYTHON')
     runtime = Path(explicit) if explicit else ROOT / '.venv' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python')
@@ -97,7 +119,7 @@ def existing(data_dir):
 def launch(no_browser=False):
     if sys.version_info < (3, 11):
         raise RuntimeError('请先安装Python 3.11或更新版本，再启动文献罗盘。')
-    data_dir = Path(os.environ.get('PAPERNET_DATA_DIR') or ROOT / 'data').resolve()
+    data_dir = resolve_workspace(os.environ.get('PAPERNET_DATA_DIR') or ROOT / 'data')
     with startup_lock(data_dir):
         url = existing(data_dir)
         if not url:
@@ -147,8 +169,20 @@ def launch(no_browser=False):
 def main():
     parser = argparse.ArgumentParser(description='启动文献罗盘')
     parser.add_argument('--no-browser', action='store_true')
+    parser.add_argument('--after-exit', nargs=2, metavar=('PORT', 'DATA_ID'), help=argparse.SUPPRESS)
     args = parser.parse_args()
     try:
+        if args.after_exit:
+            import time
+            port, old_id = args.after_exit
+            deadline = time.monotonic() + 45
+            while time.monotonic() < deadline:
+                health = read_health('http://127.0.0.1:' + str(int(port)))
+                if not health or health.get('data_id') != old_id:
+                    break
+                time.sleep(.3)
+            else:
+                raise RuntimeError('旧工作空间未能退出；请关闭后从桌面重新启动。')
         launch(args.no_browser)
         return 0
     except Exception as error:
