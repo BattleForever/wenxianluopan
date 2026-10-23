@@ -1,15 +1,20 @@
 @echo off
-rem 文献罗盘（WenxianLuopan）- local startup script
-rem 历史内部兼容标识 PAPERNET_* 环境变量与 papernet.db 文件名保持不变（技术兼容层，不面向用户）
-cd /d %~dp0
-
-if not exist .venv (
-  echo Creating a Python virtual environment on first run...
-  py -3 -m venv .venv
-  .venv\Scripts\python -m pip install --upgrade pip
-  .venv\Scripts\python -m pip install -r requirements.txt
+chcp 65001 >nul
+cd /d "%~dp0"
+if exist ".venv\Scripts\python.exe" (
+  ".venv\Scripts\python.exe" launcher.py
+  exit /b
 )
-
-set PAPERNET_NO_BROWSER=
-.venv\Scripts\python -m app.main
+where py >nul 2>nul
+if not errorlevel 1 (
+  py -3 launcher.py
+  exit /b
+)
+where python >nul 2>nul
+if not errorlevel 1 (
+  python launcher.py
+  exit /b
+)
+echo Python 3.11 or newer is required. Install Python, then run start.bat again.
 pause
+exit /b 1

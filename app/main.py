@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from . import graph as graphmod
 from . import __version__
+from .startup import data_identity
 from . import importer, citations as citationsmod
 from .config import DATA_DIR, DB_PATH, HOST, PDF_DIR, PORT, PDF_EXTRA_HOSTS, STATIC_DIR
 from .db import get_db, get_setting, init_db, set_setting
@@ -94,7 +95,8 @@ def health():
         n_edge = conn.execute("SELECT COUNT(*) c FROM citations WHERE from_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library') AND to_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='library')").fetchone()["c"]
     return {"ok": True, "version": __version__, "online": is_online(), "library": n_lib,
             "candidates": n_cand, "edges": n_edge,
-            "data_dir": str(DATA_DIR)}
+            "data_dir": str(DATA_DIR), "app_id": "wenxianluopan",
+            "data_id": data_identity(DATA_DIR)}
 
 
 @app.get("/api/settings")
@@ -920,8 +922,9 @@ app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="static")
 
 def _open_browser():
     if not __import__("os").environ.get("PAPERNET_NO_BROWSER"):
-        time.sleep(1.2)
-        webbrowser.open(f"http://{HOST}:{PORT}")
+        from .startup import open_ready
+        try:open_ready(f"http://{HOST}:{PORT}", DATA_DIR, __version__)
+        except RuntimeError as error:logging.getLogger(__name__).warning('%s', error)
 
 
 if __name__ == "__main__":
