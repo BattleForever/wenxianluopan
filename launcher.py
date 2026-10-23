@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from app import __version__
 from app.startup import APP_ID, data_identity, matches, read_health, wait_ready
+from app.background import spawn
 
 ROOT = Path(__file__).resolve().parent
 IMPORT_CHECK = 'import fastapi,uvicorn,requests,networkx,bibtexparser,fitz,sklearn'
@@ -146,9 +147,8 @@ def launch(no_browser=False):
                 runtime = ensure_runtime(data_dir)
                 env = dict(os.environ, PAPERNET_DATA_DIR=str(data_dir), PAPERNET_PORT=str(port), PAPERNET_NO_BROWSER='1', PYTHONUNBUFFERED='1')
                 log = data_dir / 'private' / 'startup.log'
-                flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
                 with log.open('a', encoding='utf-8') as output:
-                    process = subprocess.Popen([str(runtime), '-m', 'app.main'], cwd=ROOT, env=env, stdout=output, stderr=output, stdin=subprocess.DEVNULL, creationflags=flags, start_new_session=os.name != 'nt')
+                    process = spawn([str(runtime), '-m', 'app.main'], cwd=ROOT, env=env, stdout=output, stderr=output, stdin=subprocess.DEVNULL)
                 url = f'http://127.0.0.1:{port}'
                 try:
                     wait_ready(url, data_dir, __version__, process=process)

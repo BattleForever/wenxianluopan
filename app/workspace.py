@@ -49,6 +49,7 @@ class SearchIn(BaseModel):
     limit: int = Field(default=100,ge=1,le=500)
     offset: int = Field(default=0,ge=0,le=1000000)
     pin_seeds: bool = False
+    all_results: bool = False
     folder_id: int | None = Field(default=None,gt=0)
     unfiled: bool = False
     folder_descendants: bool = True
@@ -61,7 +62,7 @@ class ReadingIn(BaseModel):
 
 
 class ExportIn(BaseModel):
-    ids: list[int] = Field(min_length=1,max_length=500)
+    ids: list[int] = Field(min_length=1,max_length=50000)
     format: Literal['csv','ris','graphml'] = 'csv'
     job_id: str = ''
 
@@ -182,19 +183,21 @@ def search(body:SearchIn):
                else p.get('network_score') if body.sort=='network' else (p.get('discovery') or {}).get('depth') if body.sort=='depth' else p.get('cited_by_count'))
         return (value is None,(value if body.sort in ('cas_zone','year_asc','depth') else -value) if value is not None else 0,-(p.get('year') or 0),p['id'])
     output.sort(key=key)
-    anchors=[p for p in output if p['is_seed']][:max(0,body.limit-1)] if body.pin_seeds else []
+    anchors=[p for p in output if p['is_seed']][:max(0,body.limit-1)] if body.pin_seeds and not body.all_results else []
     anchor_ids={p['id'] for p in anchors}
     remaining=[p for p in output if p['id'] not in anchor_ids]
     capacity=body.limit-len(anchors)
     page=body.offset//body.limit
     page_count=max(1,(len(remaining)+capacity-1)//capacity)
-    visible=anchors+remaining[page*capacity:(page+1)*capacity]
+    visible=output if body.all_results else anchors+remaining[page*capacity:(page+1)*capacity]
+    if body.all_results:page=0;page_count=1
     ids={p['id'] for p in visible}
     ge=[e for e in edges if e['from_id'] in ids and e['to_id'] in ids]
     clusters=compute_clusters(visible,ge)
     for p in visible: p['cluster']=clusters.get(p['id'],0)
     return {'total':len(output),'shown':len(visible),'papers':visible,'model':model,'facets':facets,
-            'offset':page*body.limit,'limit':body.limit,'has_more':page+1<page_count,
+            'offset':page*body.limit,'limit':max(1,len(output)) if body.all_results else body.limit,'has_more':page+1<page_count,
+            'all_results':body.all_results,
             'page_count':page_count,'anchor_count':len(anchors),
             'edges':[{'from':e['from_id'],'to':e['to_id'],'source':e['src']} for e in ge],
             'metric_note':'IF 和分区属于期刊指标，不是论文质量分；未知值显示未知并排在最后，不按 0 处理；'
@@ -259,4 +262,6 @@ def export(body:ExportIn):
             for e in conn.execute('SELECT * FROM citations'):
                 if str(e['from_id']) in g and str(e['to_id']) in g: g.add_edge(str(e['from_id']),str(e['to_id']),source=e['src'] or '')
         content='\n'.join(nx.generate_graphml(g)); mime='application/xml'; ext='graphml'
+    from .project_files import save_export
+    save_export('文献导出',ext,content)
     return Response(content,media_type=mime,headers={'Content-Disposition':f'attachment; filename="papernet_selected.{ext}"'})

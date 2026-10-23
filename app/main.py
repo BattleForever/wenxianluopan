@@ -947,5 +947,16 @@ def _open_browser():
 if __name__ == "__main__":
     threading.Thread(target=_open_browser, daemon=True).start()
     server = uvicorn.Server(uvicorn.Config(app, host=HOST, port=PORT, log_level="warning"))
-    app.state.stop_server = lambda: setattr(server, 'should_exit', True)
-    server.run()
+    from .lifecycle import record
+    def stop_managed_server():
+        record('stop_requested',getattr(app.state,'stop_reason','user_exit'))
+        server.should_exit = True
+    app.state.stop_server = stop_managed_server
+    record('starting')
+    try:
+        server.run()
+    except BaseException as error:
+        record('exception',type(error).__name__)
+        raise
+    finally:
+        record('stopped',getattr(app.state,'stop_reason','terminal_or_system'))

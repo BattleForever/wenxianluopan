@@ -21,6 +21,9 @@ from starlette.background import BackgroundTask
 from .config import BASE_DIR, DATA_DIR, DB_PATH, PORT
 from .private_settings import atomic_json
 from .startup import data_identity
+from .background import spawn
+from . import project_files
+from typing import Literal
 
 router = APIRouter(prefix='/api/workspace')
 TOKEN = secrets.token_urlsafe(32)
@@ -106,10 +109,10 @@ def snapshot(target, portable=True):
     target.mkdir(parents=True, exist_ok=True)
     with database(DB_PATH) as src, database(target/'papernet.db') as out:
         src.backup(out)
-    allowed = ['pdfs', 'private/pdf_sources', 'recycle_staging']
+    allowed = ['pdfs', 'private/pdf_sources', 'recycle_staging', '项目文件/个人资料', '项目文件/导出']
     if not portable:
         # Local migration retains connection settings, never temporary locks/logs.
-        allowed += ['private']
+        allowed += ['private', '项目文件']
     copied = set()
     for name in allowed:
         folder = DATA_DIR/name
@@ -192,7 +195,7 @@ def unpack(archive, target):
                     or p.as_posix() != e.filename or any(part.rstrip(' .') != part for part in p.parts)
                     or (e.external_attr >> 16) & 0o170000 == 0o120000):
                 raise ValueError('备份含不安全的文件路径。')
-            if e.filename not in ('workspace.json', 'papernet.db') and not e.filename.startswith(('pdfs/', 'private/pdf_sources/', 'recycle_staging/')):
+            if e.filename not in ('workspace.json', 'papernet.db') and not e.filename.startswith(('pdfs/', 'private/pdf_sources/', 'recycle_staging/', '项目文件/个人资料/', '项目文件/导出/')):
                 raise ValueError('备份包含不支持的文件或连接配置。')
         if 'workspace.json' not in names:
             raise ValueError('备份缺少工作空间清单。')
@@ -240,19 +243,33 @@ def state(request: Request):
     if request.url.hostname not in ('127.0.0.1', 'localhost', 'testserver'):
         raise HTTPException(403, '请从本机页面打开工作空间。')
     return {'directory': str(DATA_DIR.resolve()), 'token': TOKEN, 'busy': BUSY.is_set(),
+            'locations':project_files.locations(),
             'can_exit': callable(getattr(request.app.state, 'stop_server', None)), 'jobs': job_count()}
 
 
+class FolderTarget(BaseModel):
+    kind: Literal['project','papers','originals','backups','exports','notes','system']='project'
+
+
 @router.post('/open-folder')
-def open_folder(request: Request):
+def open_folder(request: Request, body: FolderTarget | None=None):
     authorize(request)
+    kind=body.kind if body else 'project'
+    if kind in ('project','papers','originals'):project_files.refresh()
+    path=project_files.directory(kind)
     if os.name == 'nt':
-        os.startfile(str(DATA_DIR.resolve()))
+        os.startfile(str(path.resolve()))
     elif sys.platform == 'darwin':
-        subprocess.Popen(['open', str(DATA_DIR.resolve())])
+        subprocess.Popen(['open', str(path.resolve())])
     else:
-        subprocess.Popen(['xdg-open', str(DATA_DIR.resolve())])
+        subprocess.Popen(['xdg-open', str(path.resolve())])
     return {'ok': True}
+
+
+@router.post('/refresh-files')
+def refresh_files(request: Request):
+    authorize(request)
+    return project_files.refresh()
 
 
 @router.post('/choose-folder')
@@ -276,9 +293,13 @@ def backup(request: Request):
                 for path in (root/'workspace').rglob('*'):
                     if path.is_file():
                         z.write(path, path.relative_to(root/'workspace').as_posix())
-        return FileResponse(root/'backup.zip', filename=time.strftime('文献罗盘备份_%Y%m%d_%H%M%S.zip'),
+            import uuid
+            saved=project_files.directory('backups')/(time.strftime('文献罗盘备份_%Y%m%d_%H%M%S_')+uuid.uuid4().hex[:5]+'.zip')
+            shutil.copy2(root/'backup.zip',saved)
+        shutil.rmtree(root)
+        return FileResponse(saved, filename=saved.name,
                             headers={'X-Missing-PDFs': str(len(info['missing_pdf_ids']))},
-                            background=BackgroundTask(shutil.rmtree, root))
+                            )
     except (ValueError, OSError) as error:
         shutil.rmtree(root, ignore_errors=True)
         raise HTTPException(400, str(error))
@@ -294,13 +315,13 @@ def restart(request, destination):
     pointer = DATA_DIR/'private'/'relocation.local.json'
     previous = pointer.read_bytes() if pointer.exists() else None
     env = dict(os.environ, PAPERNET_DATA_DIR=str(DATA_DIR.resolve()), PAPERNET_PORT=str(PORT))
-    flags = (subprocess.CREATE_NO_WINDOW | subprocess.CREATE_NEW_PROCESS_GROUP) if os.name == 'nt' else 0
     request.app.state.workspace_switching = True
+    request.app.state.stop_reason = 'switch_workspace'
     try:
         atomic_json(pointer, {'target': str(destination), 'data_id': data_identity(destination)})
-        subprocess.Popen([sys.executable, str(BASE_DIR/'launcher.py'), '--after-exit', str(PORT), data_identity(DATA_DIR)],
+        spawn([sys.executable, str(BASE_DIR/'launcher.py'), '--after-exit', str(PORT), data_identity(DATA_DIR)],
                          cwd=BASE_DIR, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                         stderr=subprocess.DEVNULL, creationflags=flags, start_new_session=os.name != 'nt')
+                         stderr=subprocess.DEVNULL)
     except Exception:
         if previous is None:
             pointer.unlink(missing_ok=True)
@@ -372,5 +393,6 @@ def exit_app(request: Request):
         raise HTTPException(409, '当前服务不是由启动器管理，请在启动终端按 Ctrl+C 关闭。')
     with exclusive(request):
         request.app.state.workspace_switching = True
+        request.app.state.stop_reason = 'user_exit'
         threading.Timer(.6, stop).start()
     return {'ok': True}

@@ -24,7 +24,7 @@ class WorkspaceData(unittest.TestCase):
   self.tmp=tempfile.TemporaryDirectory();self.addCleanup(self.tmp.cleanup);self.root=Path(self.tmp.name)
   self.data=self.root/'data';self.data.mkdir();self.db=self.data/'papernet.db'
   self.client=TestClient(app);self.headers={'X-Workspace-Token':w.TOKEN}
-  self.patches=[patch.object(w,'DATA_DIR',self.data),patch.object(w,'DB_PATH',self.db)]
+  self.patches=[patch.object(w,'DATA_DIR',self.data),patch.object(w,'DB_PATH',self.db),patch.object(w.project_files,'DATA_DIR',self.data)]
   for p in self.patches:p.start();self.addCleanup(p.stop)
   with w.database(self.db) as c:
    c.executescript('''CREATE TABLE papers(id INTEGER PRIMARY KEY,local_pdf_path TEXT,title TEXT);

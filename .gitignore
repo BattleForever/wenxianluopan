@@ -26,3 +26,8 @@ private/
 # Maintenance documentation remains in the local version archive.
 CHANGELOG.md
 docs/UPGRADING.md
+
+# Generated user project files and local shortcuts.
+项目文件/
+*.lnk
+*.url

@@ -30,5 +30,15 @@ class GraphPaging(unittest.TestCase):
  def test_limit_one_still_makes_forward_progress(self):
   data=self.query(limit=1);self.assertEqual(data['anchor_count'],0);self.assertEqual(data['page_count'],80)
   self.assertNotEqual(data['papers'][0]['id'],self.query(limit=1,offset=1)['papers'][0]['id'])
+ def test_all_results_exceeds_the_paged_api_limit_without_losing_records(self):
+  with get_db() as db:
+   for i in range(1000,1620):db.execute('INSERT INTO papers(id,title,status,cited_by_count,year) VALUES(?,?,?,?,?)',(i,'Extra '+str(i),'library',i,2025))
+  try:
+   data=self.query(all_results=True,limit=40)
+   self.assertEqual(data['total'],700);self.assertEqual(data['shown'],700);self.assertEqual(data['limit'],700)
+   self.assertFalse(data['has_more']);self.assertEqual(data['page_count'],1)
+   self.assertEqual(len({p['id'] for p in data['papers']}),700)
+  finally:
+   with get_db() as db:db.execute('DELETE FROM papers WHERE id>=1000')
 
 if __name__=='__main__':unittest.main()

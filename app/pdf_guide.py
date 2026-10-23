@@ -364,4 +364,6 @@ def export_guide(pid:int,source_hash:str,guide_id:int|None=None):
         z.writestr('reading.md',md)
         for page in sorted({fig['evidence']['page'] for fig in data['figures']}):
             z.writestr(f'figures/page_{page:02}.png',_page_png(f,page))
+    from .project_files import save_export
+    save_export('全文解读_'+str(pid),'zip',buf.getvalue())
     return Response(buf.getvalue(),media_type='application/zip',headers={'Content-Disposition':'attachment; filename="wenxianluopan-reading.zip"','Cache-Control':'no-store'})
