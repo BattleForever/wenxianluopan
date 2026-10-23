@@ -48,6 +48,7 @@ class SearchIn(BaseModel):
     zone_scheme: Literal['cas','jcr'] = 'cas'
     limit: int = Field(default=100,ge=1,le=500)
     offset: int = Field(default=0,ge=0,le=1000000)
+    pin_seeds: bool = False
     folder_id: int | None = Field(default=None,gt=0)
     unfiled: bool = False
     folder_descendants: bool = True
@@ -181,13 +182,20 @@ def search(body:SearchIn):
                else p.get('network_score') if body.sort=='network' else (p.get('discovery') or {}).get('depth') if body.sort=='depth' else p.get('cited_by_count'))
         return (value is None,(value if body.sort in ('cas_zone','year_asc','depth') else -value) if value is not None else 0,-(p.get('year') or 0),p['id'])
     output.sort(key=key)
-    visible=output[body.offset:body.offset+body.limit]
+    anchors=[p for p in output if p['is_seed']][:max(0,body.limit-1)] if body.pin_seeds else []
+    anchor_ids={p['id'] for p in anchors}
+    remaining=[p for p in output if p['id'] not in anchor_ids]
+    capacity=body.limit-len(anchors)
+    page=body.offset//body.limit
+    page_count=max(1,(len(remaining)+capacity-1)//capacity)
+    visible=anchors+remaining[page*capacity:(page+1)*capacity]
     ids={p['id'] for p in visible}
     ge=[e for e in edges if e['from_id'] in ids and e['to_id'] in ids]
     clusters=compute_clusters(visible,ge)
     for p in visible: p['cluster']=clusters.get(p['id'],0)
     return {'total':len(output),'shown':len(visible),'papers':visible,'model':model,'facets':facets,
-            'offset':body.offset,'limit':body.limit,'has_more':body.offset+len(visible)<len(output),
+            'offset':page*body.limit,'limit':body.limit,'has_more':page+1<page_count,
+            'page_count':page_count,'anchor_count':len(anchors),
             'edges':[{'from':e['from_id'],'to':e['to_id'],'source':e['src']} for e in ge],
             'metric_note':'IF 和分区属于期刊指标，不是论文质量分；未知值显示未知并排在最后，不按 0 处理；'
                           '设置 IF/分区/年份阈值时，该指标未知的文献会被排除（分区阈值同样排除未知分区）；'

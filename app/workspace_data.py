@@ -184,11 +184,16 @@ def unpack(archive, target):
         names = [e.filename for e in entries]
         if len(entries) > 50000 or len(names) != len(set(names)) or sum(e.file_size for e in entries) > MAX_BYTES:
             raise ValueError('备份体积过大或存在重复文件。')
+        if len({PurePosixPath(n).as_posix().casefold() for n in names}) != len(names):
+            raise ValueError('备份含大小写冲突的文件名。')
         for e in entries:
             p = PurePosixPath(e.filename)
             if (p.is_absolute() or '..' in p.parts or '\\' in e.filename or ':' in e.filename
+                    or p.as_posix() != e.filename or any(part.rstrip(' .') != part for part in p.parts)
                     or (e.external_attr >> 16) & 0o170000 == 0o120000):
                 raise ValueError('备份含不安全的文件路径。')
+            if e.filename not in ('workspace.json', 'papernet.db') and not e.filename.startswith(('pdfs/', 'private/pdf_sources/', 'recycle_staging/')):
+                raise ValueError('备份包含不支持的文件或连接配置。')
         if 'workspace.json' not in names:
             raise ValueError('备份缺少工作空间清单。')
         if z.getinfo('workspace.json').file_size > 8 * 1024**2:

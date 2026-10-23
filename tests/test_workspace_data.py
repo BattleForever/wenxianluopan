@@ -88,6 +88,16 @@ class WorkspaceData(unittest.TestCase):
   for path in (self.data,self.data/'inside',self.root):
    with self.assertRaises(ValueError):w.target_directory(str(path))
   with self.assertRaises(ValueError):w.target_directory('relative-directory')
+ def test_import_rejects_connection_files_even_with_forged_manifest(self):
+  folder=self.root/'snapshot';w.snapshot(folder);meta=json.loads((folder/'workspace.json').read_text())
+  name='PRIVATE/ai_config.local.json';content=b'{"api_key":"injected-connection"}';meta['files'][name]=hashlib.sha256(content).hexdigest()
+  f=io.BytesIO()
+  with zipfile.ZipFile(f,'w') as z:
+   for path in folder.rglob('*'):
+    if path.is_file() and path.name!='workspace.json':z.write(path,path.relative_to(folder).as_posix())
+   z.writestr('workspace.json',json.dumps(meta));z.writestr(name,content)
+  f.seek(0)
+  with self.assertRaises(ValueError):w.unpack(f,self.root/'out')
  def test_mutations_require_own_origin_and_token(self):
   for headers in ({},{**self.headers,'Origin':'https://evil.invalid'}):
    self.assertEqual(self.client.post('/api/workspace/open-folder',headers=headers).status_code,403)
