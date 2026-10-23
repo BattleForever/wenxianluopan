@@ -1,12 +1,15 @@
-<div align="center">
-  <img src="static/brand/wenxianluopan-icon-64.png" width="76" alt="文献罗盘">
-  <h1>文献罗盘</h1>
-  <p>AI 辅助文献调研，让发现、阅读与整理衔接起来。</p>
-</div>
+<p align="center">
+  <img src="docs/images/readme-hero.png" width="1280" alt="文献罗盘 — 追踪研究脉络，读懂文献原文。双向引文追踪、AI 双语速览、AI 全文解读。数据保存在本机。">
+</p>
+
+<p align="center">
+  <a href="#启动软件">快速开始</a> &nbsp; · &nbsp;
+  <a href="#特色功能">特色功能</a> &nbsp; · &nbsp;
+  <a href="docs/USER_GUIDE.md">功能说明书</a> &nbsp; · &nbsp;
+  <a href="https://github.com/BattleForever/wenxianluopan/releases/latest">下载软件</a>
+</p>
 
 从一篇已知论文出发，沿参考文献追溯研究基础，沿施引文献了解后续进展；通过图谱筛选相关工作，再用 AI 翻译、概括和全文解读理解研究内容。将选中的论文与阅读备注按专题保存，逐步积累自己的研究资料。
-
-适用于开题前的文献检索、了解新的研究方向、比较相关工作和准备综述。
 
 > **所有工作数据均保存在本机，由你管理和备份。**
 
