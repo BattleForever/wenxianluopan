@@ -306,7 +306,7 @@ dialog.detail-dialog::backdrop{background:transparent}
   .brand-name{font-size:17px}
   .brand-sub{display:none}
   .nav-caption,.sidebar-bottom{display:none}
-  .sidebar nav{display:flex;gap:4px}
+  .sidebar nav{display:flex;flex-direction:row;gap:4px}
   .nav-item{width:auto;padding:8px 10px;margin:0;font-size:12.5px}
   .nav-item span{display:none}
   .nav-item b{display:none}
