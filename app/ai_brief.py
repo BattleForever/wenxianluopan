@@ -75,7 +75,7 @@ except Exception:  # noqa: BLE001 - 导入期一律降级
 
 log = logging.getLogger("papernet.ai")
 
-PROMPT_VERSION = "ai_brief_v1"
+PROMPT_VERSION = "ai_brief_v2_contiguous_quotes"
 # V4R1：字段补全 AI 提供者的提示词版本（登记进 content_provenance.prompt_version）
 ENRICH_FIELD_PROMPT_VERSION = "enrich_field_v1"
 METADATA_FILL_PROMPT_VERSION = "metadata_fill_v1"
@@ -299,7 +299,7 @@ SYSTEM_PROMPT = """你是学术文献摘要分析助手。用户消息中提供�
 2. 只依据提供的摘要内容作答；禁止使用你自己的知识补充摘要中没有的事实、数字、样本量、结论或创新性声明。
 3. title_zh 是题名的中文翻译（逐字翻译题名，不是概括）。
 4. abstract_zh 是摘要的中文概括（2-4 句），abstract_en 是摘要的英文概括（2-4 句）。它们是概括，不是逐字翻译。
-5. question/method/results/contribution 四要素各含 zh（中文概括）、en（英文概括）、quote 三个字段。quote 必须是输入摘要中逐字连续出现的原文片段（不超过 60 词），用于支持该要素；摘要中确实没有该要素时，zh 和 en 都填写"摘要未提供"，quote 填空字符串。
+5. question/method/results/contribution 四要素各含 zh（中文概括）、en（英文概括）、quote 三个字段。quote 必须从输入摘要中直接复制一处逐字连续的短片段（8–180字符），用于支持该要素；严禁将不相邻的两句话拼成一个 quote，严禁删掉中间句子、改写连字符或加入省略号；摘要中确实没有该要素时，zh 和 en 都填写"摘要未提供"，quote 填空字符串。
 6. 只输出一个 JSON 对象，不要输出任何解释文字、markdown 代码围栏或注释。
 
 JSON 结构（字段名固定）：
@@ -324,7 +324,7 @@ GAP_SYSTEM_PROMPT = """你是学术文献摘要分析助手。用户消息中提
 2. 只依据提供的摘要内容作答；禁止使用你自己的知识补充摘要中没有的事实、数字、样本量、结论或创新性声明。
 3. 该文献的中文题名与中文摘要译文已有内容，本次不要生成，也不要在输出 JSON 中包含这两个字段。
 4. abstract_en 是摘要的英文概括（2-4 句），是概括，不是逐字翻译。
-5. question/method/results/contribution 四要素各含 zh（中文概括）、en（英文概括）、quote 三个字段。quote 必须是输入摘要中逐字连续出现的原文片段（不超过 60 词），用于支持该要素；摘要中确实没有该要素时，zh 和 en 都填写"摘要未提供"，quote 填空字符串。
+5. question/method/results/contribution 四要素各含 zh（中文概括）、en（英文概括）、quote 三个字段。quote 必须从输入摘要中直接复制一处逐字连续的短片段（8–180字符），用于支持该要素；严禁将不相邻的两句话拼成一个 quote，严禁删掉中间句子、改写连字符或加入省略号；摘要中确实没有该要素时，zh 和 en 都填写"摘要未提供"，quote 填空字符串。
 6. 只输出一个 JSON 对象，不要输出任何解释文字、markdown 代码围栏或注释。
 
 JSON 结构（字段名固定）：

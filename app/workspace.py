@@ -68,6 +68,8 @@ class ExportIn(BaseModel):
 
 
 def load_papers(scope='all'):
+    from .metric_jobs import hydrate_cached
+    hydrate_cached()
     with get_db() as conn:
         extra={
             'library':" AND status='library'",

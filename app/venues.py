@@ -4,6 +4,7 @@
 （只追加，不删除——与文献整理会话的管道共享同一份缓存）。
 """
 import json
+import hashlib
 import os
 import re
 import threading
@@ -51,6 +52,36 @@ def local_rank(name: str):
     """本地缓存查询。返回 {rank:{...}, at} 或 None。"""
     from .private_settings import LOCK
     with LOCK:return _load_cache().get(norm_name(name))
+
+
+def remember_records(records):
+    """Keep immutable metric versions in the local catalog, without raw payloads."""
+    from .db import get_db
+    with get_db() as c:
+        c.execute('''CREATE TABLE IF NOT EXISTS journal_metric_history (
+            id TEXT PRIMARY KEY,name_norm TEXT NOT NULL,name TEXT NOT NULL,
+            metric_year INTEGER,checked_at TEXT,fields_json TEXT NOT NULL,source TEXT NOT NULL)''')
+        c.execute('CREATE INDEX IF NOT EXISTS idx_metric_history_name_year ON journal_metric_history(name_norm,metric_year)')
+        for rec in records:
+            name=rec.get('name');rank=rec.get('rank')
+            if not isinstance(name,str) or not isinstance(rank,dict):continue
+            fields=rank_to_fields(rank)
+            if not fields:continue
+            year=rec.get('metric_year')
+            if not isinstance(year,int) or isinstance(year,bool) or not 1900<=year<=2099:year=None
+            value={'name':name[:300],'year':year,'at':str(rec.get('at') or '')[:50],
+                   'fields':{k:str(v)[:100] for k,v in fields.items()},'source':'easyScholar 导入缓存' if rec.get('imported') else 'easyScholar'}
+            digest=hashlib.sha256(json.dumps(value,sort_keys=True,ensure_ascii=False).encode()).hexdigest()
+            c.execute('INSERT OR IGNORE INTO journal_metric_history VALUES(?,?,?,?,?,?,?)',
+                      (digest,norm_name(name),value['name'],year,value['at'],json.dumps(value['fields'],ensure_ascii=False),value['source']))
+
+
+def catalog_stats():
+    values=list(_load_cache().values())
+    valid=[r for r in values if isinstance(r.get('rank'),dict) and rank_to_fields(r['rank'])]
+    return {'journals':len(valid),'if_known':sum(bool(rank_to_fields(r['rank']).get('impact_factor')) for r in valid),
+            'cas_known':sum(bool(rank_to_fields(r['rank']).get('cas_zone')) for r in valid),
+            'jcr_known':sum(bool(rank_to_fields(r['rank']).get('jcr_zone')) for r in valid)}
 
 
 def load_key():
@@ -102,6 +133,7 @@ def online_rank(name: str, key: str):
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         except OSError:
             pass  # 缓存写失败不影响本次结果
+    remember_records([rec])
     return rec, False
 
 

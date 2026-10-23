@@ -12,14 +12,15 @@ panel.addEventListener('change',summary);document.addEventListener('click',e=>{i
 const dock=document.createElement('aside');dock.id='background-task-dock';dock.hidden=true;dock.setAttribute('aria-label','后台任务');
 dock.innerHTML='<button id="task-orb" aria-label="打开补全任务"><span class="task-orb-value">0%</span><i></i></button><div class="task-dock-card"><div><strong id="task-dock-title">资料补全</strong><button id="task-dock-hide" aria-label="隐藏任务提示">×</button></div><p id="task-dock-description"></p><div><button data-enrichment-show>查看任务</button><button id="task-dock-inline">展开结果栏</button></div></div>';
 document.body.append(dock);let job=null,hiddenId=null;
-function update(j){job=j;if(!j){dock.hidden=true;return;}const active=['running','queued','cancelling'].includes(j.status),pct=Math.round(100*(j.completed||0)/Math.max(1,j.total));
+function update(j){job=j;if(!j){dock.hidden=hiddenId==='idle';dock.classList.remove('task-active');dock.querySelector('.task-orb-value').textContent='•';document.getElementById('task-dock-title').textContent='小书灵 · 随时待命';document.getElementById('task-dock-description').textContent='按住我可以拖动；点击查看最近任务。';return;}const active=['running','queued','cancelling'].includes(j.status),pct=Math.round(100*(j.completed||0)/Math.max(1,j.total));
  dock.hidden=hiddenId===j.id;dock.classList.toggle('task-active',active);dock.style.setProperty('--task-progress',pct+'%');dock.querySelector('.task-orb-value').textContent=active?pct+'%':j.fields_filled?'✓':'•';
  document.getElementById('task-dock-title').textContent=active?'正在补全资料':'资料补全已结束';document.getElementById('task-dock-description').textContent=`${j.completed}/${j.total} 篇 · 新增 ${j.fields_filled} 个字段`;
  document.getElementById('task-orb').setAttribute('aria-label',`补全任务 ${pct}%：点击查看进度与结果`);
 }
 document.getElementById('task-orb').onclick=()=>window.WenxianEnrichment?.show();
-document.getElementById('task-dock-hide').onclick=()=>{hiddenId=job?.id;dock.hidden=true;};
+document.getElementById('task-dock-hide').onclick=()=>{hiddenId=job?.id||'idle';dock.hidden=true;};
 document.getElementById('task-dock-inline').onclick=()=>{const bar=document.getElementById('enrichment-progress');bar.dataset.dismissed='';bar.hidden=false;bar.dataset.view='inline';window.dispatchEvent(new Event('resize'));};
 window.WenxianTaskDock={update,show:()=>{hiddenId=null;update(job);}};
 const taskToggle=document.createElement('button');taskToggle.id='background-tasks-toggle';taskToggle.className='secondary small';taskToggle.textContent='后台任务';taskToggle.onclick=()=>{hiddenId=null;update(job);window.WenxianEnrichment?.show();};document.getElementById('detail-toggle').before(taskToggle);
+update(null);
 })();

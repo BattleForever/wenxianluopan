@@ -1,4 +1,5 @@
 """Explicit, cancellable metadata completion. No network calls from reads."""
+from contextlib import nullcontext
 import hashlib
 import json
 import re
@@ -100,15 +101,20 @@ def local_pdf_abstract(p):
             if d.needs_pass:return None
             text=sources.plain(' '.join(d[i].get_text(sort=False) for i in range(min(2,len(d)))))
         m=re.search(r'\bAbstract\s*[:\-]?\s*(.{100,12000}?)\s*\b(?:1\s*[.\-]?\s*)?Introduction\b',text,re.I)
-        if m:return {'abstract':m[1].strip(),'_source':'PDF 正文摘要','_url':None,'_origin':'local_pdf'}
+        if m:
+            abstract=re.split(r'\b(?:Index\s+Terms|Keywords|Key\s+words)\s*[:—–-]',m[1],maxsplit=1,flags=re.I)[0]
+            return {'abstract':abstract.strip(' \t\r\n:—–-'),'_source':'PDF 正文摘要','_url':None,'_origin':'local_pdf'}
     except Exception:pass
     return None
 
-def apply_metrics(pid,data):
-    p=paper(pid);name=p.get('venue')
-    if not name:return []
+def apply_metrics(pid,data,connection=None):
     filled=[]
-    with get_db() as c:
+    with (nullcontext(connection) if connection is not None else get_db()) as c:
+        ensure_active(c,[pid])
+        p=c.execute('SELECT venue FROM papers WHERE id=?',(pid,)).fetchone()
+        if not p:raise ValueError('paper missing')
+        name=p['venue']
+        if not name:return []
         _ensure_venue_row(c,name,data['_source'])
         v=dict(c.execute('SELECT * FROM venues WHERE name_norm=?',(norm_venue(name),)).fetchone())
         extra=json.loads(v.get('extra_json') or '{}');proofs=extra.setdefault('metric_evidence',{})

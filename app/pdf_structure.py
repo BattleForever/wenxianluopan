@@ -34,6 +34,8 @@ def inventory(doc):
     body_font = fonts.most_common(1)[0][0] if fonts else ''
     anchors = re.compile(r'^(?:\d+[.\s]+)?(?:abstract|introduction|background|materials and methods|methods|results(?: and discussion)?|discussion|conclusions?)$', re.I)
     caption_re = re.compile(r'^(?:Fig\.?|Figure)\s*(\d+)\b[.:]?\s+', re.I)
+    caption_split = re.compile(r'(?<!\w)(?:Fig\.?|Figure)\s*(\d+)\s*[.:]\s+',re.I)
+    numbered_heading = re.compile(r'^(?:[IVXLCDM]+|\d+(?:\.\d+)*|[A-Z])\.\s+([A-Z][A-Z0-9 /&,()\-]{2,})$')
     styles = set()
     figures = {}
     for page_no, lines, height in blocks:
@@ -43,12 +45,17 @@ def inventory(doc):
         text = normalize(' '.join(line[0] for line in lines))
         match = caption_re.match(text)
         if match and int(match[1]) <= 60:
-            # Only a sequence starting a,b is accepted; an isolated article 'a'
-            # must never become an invented panel label.
-            labels = list(dict.fromkeys(re.findall(r'\b([a-z])\s+(?=[A-Z])', text)))
-            labels = labels if len(labels) >= 2 and labels[:2] == ['a', 'b'] and labels == sorted(labels) else []
-            figures.setdefault(int(match[1]), {'number': int(match[1]), 'page': page_no,
-                                              'caption': text, 'panels': labels})
+            # Some IEEE PDFs place adjacent captions in one extraction block.
+            # Split actual caption starts instead of discarding the second figure.
+            starts=list(caption_split.finditer(text))
+            captions=[(int(m[1]),text[m.start():starts[i+1].start() if i+1<len(starts) else len(text)]) for i,m in enumerate(starts)]
+            if not captions:captions=[(int(match[1]),text)]
+            for number,caption in captions:
+                if number>60:continue
+                labels=list(dict.fromkeys(re.findall(r'\(([a-z])\)',caption)))
+                if not labels:labels=list(dict.fromkeys(re.findall(r'\b([a-z])\s+(?=[A-Z])',caption)))
+                labels=labels if len(labels)>=2 and labels==[chr(97+i) for i in range(len(labels))] else []
+                figures.setdefault(number,{'number':number,'page':page_no,'caption':caption.strip(),'panels':labels})
     sections = []
     styles.discard(body_font)
     seen = set()
@@ -62,12 +69,14 @@ def inventory(doc):
             if stopped:
                 continue
             style = spans[0]['font'].split('+')[0]
-            if (style not in styles or not 0.9 * body_size <= spans[0]['size'] <= 1.5 * body_size
+            numbered=bool(numbered_heading.fullmatch(text))
+            content=re.sub(r'^(?:[IVXLCDM]+|\d+(?:\.\d+)*|[A-Z])\.\s+','',text)
+            if ((style not in styles and not numbered) or not 0.9 * body_size <= spans[0]['size'] <= 1.5 * body_size
                     or not 4 <= len(text) <= 150 or bbox[1] < 45 or bbox[3] > height - 30
-                    or caption_re.match(text) or re.search(r'[.!?;:=¼]|\bdoi\b', text, re.I)
+                    or caption_re.match(text) or re.search(r'[.!?;:=¼]|\bdoi\b', content, re.I)
                     or sum(len(w)==1 for w in text.split()) > len(text.split()) / 2
                     or not re.match(r'(?:\d+[.\s]+)?[A-Z]', text)
-                    or len(text.split()) < 2 and not anchors.fullmatch(text)):
+                    or len(text.split()) < 2 and not anchors.fullmatch(text) and not numbered):
                 continue
             key = text.casefold()
             if key not in seen:

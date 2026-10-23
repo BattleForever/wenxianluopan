@@ -59,7 +59,9 @@ def import_metrics_cache(body:dict):
         except (ValueError,TypeError,AttributeError):rejected+=1
     if not records:raise HTTPException(400,'文件中没有有效的 easyScholar 期刊指标记录')
     with LOCK:
-        values={**venues._load_cache(),**records};path=venues.CACHE_PATH;path.parent.mkdir(parents=True,exist_ok=True)
+        previous=venues._load_cache()
+        venues.remember_records([*previous.values(),*records.values()])
+        values={**previous,**records};path=venues.CACHE_PATH;path.parent.mkdir(parents=True,exist_ok=True)
         fd,name=tempfile.mkstemp(dir=path.parent,suffix='.tmp')
         try:
             with os.fdopen(fd,'w',encoding='utf-8') as out:
@@ -69,4 +71,11 @@ def import_metrics_cache(body:dict):
         finally:
             from pathlib import Path
             Path(name).unlink(missing_ok=True)
-    return {'imported':len(records),'rejected':rejected,'message':'指标缓存已导入；点击补全信息即可匹配到文献。缓存日期不作为指标年份。'}
+    from .metric_jobs import hydrate_cached
+    fields=hydrate_cached()
+    return {'imported':len(records),'rejected':rejected,'fields_filled':fields,'message':'已批量匹配文献中的期刊指标。缓存日期不作为指标年份。'}
+
+@router.get('/metrics-catalog')
+def metrics_catalog():
+    from .venues import catalog_stats
+    return {**catalog_stats(),'storage':'local','message':'期刊指标保存在本机；按期刊复用，不按论文重复查询。'}

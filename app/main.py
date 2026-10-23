@@ -867,6 +867,9 @@ app.include_router(data_sources.router)
 from . import metadata_jobs
 metadata_jobs.init()
 app.include_router(metadata_jobs.router)
+from . import metric_jobs
+metric_jobs.init()
+app.include_router(metric_jobs.router)
 
 from . import pdf_guide
 pdf_guide.init()

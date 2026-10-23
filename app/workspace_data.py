@@ -56,7 +56,7 @@ def job_count():
     count = 0
     with database(DB_PATH) as db:
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for name in ('research_jobs', 'enrichment_jobs'):
+        for name in ('research_jobs', 'enrichment_jobs', 'metric_jobs'):
             if name in tables:
                 for (payload,) in db.execute(f'SELECT payload FROM {name}'):
                     if json.loads(payload).get('status') in ('queued', 'running', 'cancelling'):

@@ -97,14 +97,17 @@ def nature_metrics(name,memo):
                     'source_hash':hashlib.sha256(page.text.encode()).hexdigest()}
     return None
 
-def authorized_metrics(name):
+def authorized_metrics(name,allow_network=True,refresh=False):
     rec=venues.local_rank(name)
     cached=bool(rec and isinstance(rec.get('rank'),dict) and any(k in venues.rank_to_fields(rec['rank']) for k in ('impact_factor','cas_zone','jcr_zone')))
-    if not cached:
-        rec=None
-        key=venues.load_key()
-        if not key:return None
-        rec,_=venues.online_rank(name,key)
+    if not cached or (refresh and allow_network):
+        previous=rec if cached else None
+        key=venues.load_key() if allow_network else None
+        if key:
+            fresh,_=venues.online_rank(name,key)
+            if fresh:rec=fresh;cached=False
+            else:rec=previous
+        else:rec=previous
     if not rec or not isinstance(rec.get('rank'),dict):return None
     if rec.get('name') and venues.norm_name(rec['name'])!=venues.norm_name(name):raise IdentityConflict('Journal identity conflict')
     out=venues.rank_to_fields(rec['rank']);out.update(_source='easyScholar 缓存' if cached else 'easyScholar',_url='https://www.easyscholar.cc/',
