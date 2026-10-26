@@ -102,11 +102,15 @@ def _find_pdf(p):
     if p.get('local_pdf_path'):
         f=Path(p['local_pdf_path'])
         if f.is_file() and f.suffix.lower()=='.pdf':return f
+    from .zotero_attachments import find_native
+    native=find_native(p)
+    if native:return native
     root=Path(get_setting('zotero_data_dir') or Path.home()/'Zotero')
     db=root/'zotero.sqlite'
     if not db.is_file():raise HTTPException(404,'未找到可读 PDF。请先在 Zotero 为该文献添加 PDF 附件，或导入 PDF 文件夹。')
     # Never open/query the live Zotero DB. Copy associated WAL for a coherent read.
-    with tempfile.TemporaryDirectory(prefix='wenxian-pdf-') as td:
+    from .private_work import index_copy
+    with index_copy() as td:
         try:
             copy=_copy_zotero_index(db,Path(td))
             with closing(sqlite3.connect(copy)) as c:

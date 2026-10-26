@@ -1,0 +1,19 @@
+/* Explicit outbound routing; credentials are never returned to this view. */
+(()=>{'use strict';
+const $=id=>document.getElementById(id),names={direct:'直连',system:'系统代理',custom:'自定义代理'};
+let state={mode:'direct'},busy=false;
+const dialog=document.createElement('dialog');dialog.id='network-editor';dialog.className='connection-editor';
+dialog.innerHTML=`<header><h2>网络连接</h2><button class="icon-button" data-network-close aria-label="关闭网络设置">×</button></header><form id="network-form"><div class="connection-fields"><label class="field-wide">连接方式<select id="network-mode"><option value="direct">直连（默认）</option><option value="system">系统代理</option><option value="custom">自定义代理</option></select></label><div class="field-wide connection-fields" id="network-custom" hidden><label class="field-wide">代理地址<input id="network-address" placeholder="http://127.0.0.1:7890" autocomplete="off"></label><label>用户名（可选）<input id="network-username" autocomplete="off"></label><label>密码（可选）<input id="network-password" type="password" autocomplete="new-password"></label><label class="check-label field-wide"><input type="checkbox" id="network-clear">清除已保存密码</label></div></div><p class="settings-hint" id="network-hint"></p><p class="settings-feedback" id="network-result" role="status" aria-live="polite"></p><footer><button type="button" class="secondary" id="network-test">测试连接</button><button type="submit" class="primary" id="network-save">保存</button></footer></form>`;
+document.body.appendChild(dialog);
+async function api(url,data){const r=await fetch(url,{method:data?'POST':'GET',headers:{'Content-Type':'application/json'},body:data?JSON.stringify(data):undefined});const d=await r.json();if(!r.ok)throw Error(typeof d.detail==='string'?d.detail:'未能保存，请检查填写内容');return d;}
+async function load(){try{state=await api('/api/network');$('network-current').textContent=names[state.mode]+(state.mode==='custom'&&state.address?' · '+state.address:'');}catch(e){$('network-current').textContent='连接设置未能读取';}}
+function mode(){const v=$('network-mode').value;$('network-custom').hidden=v!=='custom';$('network-hint').textContent=v==='direct'?'直接连接外部服务；本机 Zotero 和本地模型始终直连。':v==='system'?'使用电脑的系统或环境代理。':'支持 HTTP、HTTPS 和 SOCKS5。密码仅保存在本机。';}
+function payload(){return {mode:$('network-mode').value,address:$('network-address').value.trim(),username:$('network-username').value.trim(),password:$('network-password').value,clear_password:$('network-clear').checked};}
+function lock(value){busy=value;$('network-edit').disabled=value;$('network-save').disabled=value;$('network-test').disabled=value;}
+$('network-edit').onclick=async()=>{await load();$('network-mode').value=state.mode;$('network-address').value=state.address||'';$('network-username').value=state.username||'';$('network-password').value='';$('network-password').placeholder=state.password_saved?'已保存；留空保持':'可选';$('network-clear').checked=false;$('network-result').textContent='';mode();dialog.showModal();};
+$('network-mode').onchange=mode;
+dialog.querySelector('[data-network-close]').onclick=()=>dialog.close();dialog.addEventListener('click',e=>{if(e.target===dialog){const b=dialog.getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)dialog.close();}});
+$('network-form').onsubmit=async e=>{e.preventDefault();if(busy)return;lock(true);try{await api('/api/network',payload());await load();dialog.close();window.dispatchEvent(new Event('wenxian-config-updated'));}catch(e){$('network-result').textContent=e.message;}finally{lock(false);}};
+$('network-test').onclick=async()=>{if(busy)return;lock(true);$('network-result').textContent='正在测试当前填写的连接方式…';try{const d=await api('/api/network/test',payload());$('network-result').textContent=(d.results||[]).map(r=>r.name+'：'+(r.reachable?'HTTP '+r.status+' · '+r.milliseconds+' ms':'连接失败')).join('；')+'。'+d.message;}catch(e){$('network-result').textContent=e.message;}finally{lock(false);}};
+load();
+})();

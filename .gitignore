@@ -31,3 +31,6 @@ docs/UPGRADING.md
 项目文件/
 *.lnk
 *.url
+
+# Network credentials are local-only even if copied outside private/.
+network.local.json

@@ -85,7 +85,7 @@ def _default_send(method, url, headers, data, timeout):
     for k, v in headers.items():
         req.add_header(k, v)
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout) as resp:
             return resp.status, dict(resp.headers), resp.read()
     except urllib.error.HTTPError as e:
         return e.code, dict(e.headers or {}), e.read() if e.fp else b""
@@ -161,10 +161,10 @@ class ZoteroClient:
 
     # ------------------------------------------------------------- 基础请求
     def _request(self, method: str, path: str, *, json_body=None,
-                 extra_headers: dict | None = None, auth: bool = False):
+                 extra_headers: dict | None = None, auth: bool = False, raw_body: bytes | None = None):
         url = f"{self.base}{path}"
         headers = {"Accept": "application/json"}
-        body = None
+        body = raw_body
         if json_body is not None:
             body = json.dumps(json_body, ensure_ascii=False).encode("utf-8")
             headers["Content-Type"] = "application/json"
@@ -190,6 +190,8 @@ class ZoteroClient:
         if status == 401:
             raise ZoteroAuthRequired("Zotero 本地 API 要求 API key（401）；"
                                      "请先本地授权获取 key")
+        if status >= 400 and (path.startswith("/api/local/uploads/") or path.endswith("/file")):
+            raise ZoteroError(f"Zotero 附件传输未完成（HTTP {status}）")
         if status in (409, 428):
             # 409 版本冲突；428 并发/预条件失败（真实 Zotero 本地 API 观测值）
             raise ZoteroConflict(f"版本冲突（{status}）："
@@ -205,7 +207,7 @@ class ZoteroClient:
         # 与响应字段名（绝无原始响应正文/字段值）。
         if wire_log.isEnabledFor(logging.DEBUG):
             wire_log.debug("zotero wire %s",
-                           json.dumps(sanitize_wire_record(method, path, status),
+                           json.dumps(sanitize_wire_record(method, "/api/local/uploads/<redacted>" if path.startswith("/api/local/uploads/") else path, status),
                                       ensure_ascii=False))
         if path == AUTHORIZE_PATH:
             info = sanitize_authorize_response(parsed)
@@ -252,7 +254,7 @@ class ZoteroClient:
         from urllib.parse import quote
         _, _, data = self._request(
             "GET", f"/api/users/0/items?q={quote(query)}&limit={limit}"
-                   "&itemType=-attachment&format=json")
+                   "&qmode=everything&itemType=-attachment&format=json")
         return data or []
 
     def get_collections(self) -> list[dict]:
@@ -334,10 +336,10 @@ class ZoteroClient:
                 return self.api_key
         return None
 
-    def create_collection(self, name: str) -> str | None:
+    def create_collection(self, name: str, parent: str | None = None) -> str | None:
         _, _, data = self._request(
             "POST", "/api/users/0/collections", auth=True,
-            json_body=[{"name": name}])
+            json_body=[{"name": name, **({"parentCollection":parent} if parent else {})}])
         return _extract_key(data, 0)
 
     def create_items(self, items: list[dict]) -> dict:
@@ -354,6 +356,42 @@ class ZoteroClient:
         _, _, data = self._request(
             "PATCH", f"/api/users/0/items/{item_key}", auth=True, json_body=patch)
         return data
+
+    def attachment_file(self, item_key):
+        """Read a trusted local file URL without following a file/network redirect."""
+        from urllib.parse import urlparse
+        from urllib.request import url2pathname
+        from pathlib import Path
+        if not KEY_RE.fullmatch(item_key or ''):raise ZoteroError('附件标识无效')
+        status,_,raw=self._send('GET',self.base+'/api/users/0/items/'+item_key+'/file/view/url',{'Accept':'text/plain'},None,self.timeout)
+        if status!=200:raise ZoteroError('Zotero附件文件暂不可读')
+        url=urlparse(raw.decode('utf-8').strip())
+        if url.scheme!='file' or url.netloc not in ('','localhost'):raise ZoteroError('附件未返回本机文件')
+        return Path(url2pathname(url.path))
+
+    def upload_pdf_attachment(self, item_key, raw, filename, mtime, previous_md5=None):
+        """Official local API three-phase full-file upload, with strict local origin."""
+        import hashlib
+        from urllib.parse import urlencode,urlparse
+        if not KEY_RE.fullmatch(item_key or ''):raise ZoteroError('附件标识无效')
+        endpoint='/api/users/0/items/'+item_key+'/file'
+        precondition={'If-Match':previous_md5} if previous_md5 else {'If-None-Match':'*'}
+        headers={'Content-Type':'application/x-www-form-urlencoded',**precondition}
+        form={'md5':hashlib.md5(raw).hexdigest(),'filename':filename,'filesize':len(raw),'mtime':int(mtime)}
+        _,_,info=self._request('POST',endpoint,auth=True,extra_headers=headers,raw_body=urlencode(form).encode())
+        if isinstance(info,dict) and info.get('exists')==1:return
+        if not isinstance(info,dict):raise ZoteroError('附件上传授权未完成')
+        upload=info.get('uploadKey');base=urlparse(self.base);target=info.get('url') or '';url=urlparse(self.base+target if target.startswith('/api/local/uploads/') else target)
+        # Upload tokens never leave the local Zotero instance; no external URL,
+        # redirect target, query-string credential or multipart wrapper is used.
+        local_aliases={'localhost','127.0.0.1','::1'}
+        same_origin=url.scheme==base.scheme and url.port==base.port and (url.hostname==base.hostname or url.hostname in local_aliases and base.hostname in local_aliases) and not url.username and not url.password
+        if not upload or not KEY_RE.fullmatch(str(upload)) or not same_origin or url.query or url.fragment or not re.fullmatch(r'/api/local/uploads/[A-Za-z0-9]+',url.path) or info.get('prefix') or info.get('suffix'):
+            raise ZoteroError('附件上传地址未通过本机校验')
+        status,_,_=self._request('POST',url.path,raw_body=raw,extra_headers={'Content-Type':info.get('contentType') or 'application/octet-stream'})
+        if status!=201:raise ZoteroError('附件文件上传未确认')
+        status,_,_=self._request('POST',endpoint,auth=True,extra_headers=headers,raw_body=urlencode({'upload':upload}).encode())
+        if status!=204:raise ZoteroError('附件登记未确认')
 
     def write_ready(self) -> bool:
         """写通道是否具备凭据（不真正写）。"""

@@ -7,12 +7,13 @@ from .zotero_client import ZoteroClient,ZoteroError,ZoteroAuthRequired,ZoteroUna
 from .private_settings import atomic_json,read_json,LOCK
 from .config import DATA_DIR
 from .db import get_db
-from . import zotero_sync,trash
+from . import zotero_sync,trash,zotero_pdf
 
 router=APIRouter(prefix='/api/zotero-link')
 _auth={};_guard=threading.Lock();_sync_guard=threading.Lock()
 
 def init():
+    zotero_pdf.init()
     with get_db() as c:c.execute('''CREATE TABLE IF NOT EXISTS zotero_destinations(
        paper_id INTEGER PRIMARY KEY,collection_key TEXT,path TEXT,item_key TEXT,verified_at TEXT)''')
 
@@ -42,12 +43,40 @@ def status(pid:int):
     try:available=cli.ping()['ok']
     except ZoteroError:available=False
     return {'available':available,'authorized':bool(cli.api_key),'destination':dict(row) if row else None,
-            'record':next(iter(sync['records']),None)}
+            'record':next(iter(sync['records']),None),'pdf':zotero_pdf.status(pid)}
 
 @router.get('/collections')
 def collections():
     try:return {'collections':collection_rows(client()),'root_label':'我的文献库（根目录）'}
     except ZoteroError:raise HTTPException(503,'未连接Zotero，请启动桌面端并允许本机应用连接')
+
+class CollectionIn(BaseModel):
+    name:str=Field(min_length=1,max_length=100)
+    parent_key:str|None=Field(default=None,pattern=r'^[A-Za-z0-9]{1,32}$')
+
+@router.post('/collections')
+def new_collection(body:CollectionIn):
+    name=body.name.strip()
+    if not name:raise HTTPException(422,'请填写集合名称')
+    if not _sync_guard.acquire(blocking=False):raise HTTPException(409,'正在保存，请稍后重试')
+    try:
+        cli=client();rows=collection_rows(cli)
+        if not cli.api_key:raise HTTPException(401,'请先连接并授权 Zotero')
+        if body.parent_key and not any(r['key']==body.parent_key for r in rows):raise HTTPException(409,'上级集合已不存在，请刷新')
+        old=next((r for r in rows if r['parent']==body.parent_key and r['name'].casefold()==name.casefold()),None)
+        if old:return {'collection':old,'created':False}
+        key=cli.create_collection(name,body.parent_key)
+        found=next((r for r in collection_rows(cli) if r['key']==key),None)
+        if not found:raise HTTPException(502,'集合创建结果尚未核对，请刷新后查看')
+        return {'collection':found,'created':True}
+    except ZoteroAuthRequired:raise HTTPException(401,'本地授权失效，请重新连接')
+    except ZoteroError:raise HTTPException(502,'集合尚未创建成功，请检查连接后重试')
+    finally:_sync_guard.release()
+
+@router.get('/recent-destinations')
+def recent_destinations():
+    with get_db() as c:rows=c.execute('SELECT collection_key,path,MAX(verified_at) AS used_at FROM zotero_destinations GROUP BY collection_key ORDER BY used_at DESC LIMIT 8').fetchall()
+    return {'destinations':[dict(r) for r in rows]}
 
 @router.post('/authorize')
 def authorize():
@@ -79,6 +108,7 @@ class Sync(BaseModel):
     paper_id:int=Field(gt=0)
     collection_key:str|None=Field(default=None,pattern=r'^[A-Za-z0-9]{1,32}$')
     move:bool=False
+    include_pdf:bool=True
 
 @router.post('/sync')
 def sync(body:Sync):
@@ -113,7 +143,9 @@ def sync(body:Sync):
                     raise HTTPException(502,'目标已添加，但旧位置迁移未核验成功；原位置记录保留，可重试')
             path=destination['path'] if destination else '我的文献库（根目录）'
             c.execute('INSERT OR REPLACE INTO zotero_destinations VALUES(?,?,?,?,?)',(body.paper_id,body.collection_key,path,key,datetime.now(timezone.utc).isoformat()))
-        return {**result,'destination':{'collection_key':body.collection_key,'path':path,'item_key':key},'message':'已同步并回读核验'}
+        pdf=zotero_pdf.sync_pdf(body.paper_id,key,cli) if body.include_pdf else zotero_pdf.status(body.paper_id)
+        complete=pdf['state'] in ('saved','existing')
+        return {**result,'destination':{'collection_key':body.collection_key,'path':path,'item_key':key},'pdf':pdf,'complete':complete,'message':'书目与阅读内容已同步；'+pdf['message'].replace('书目已保存；','')}
     except ZoteroAuthRequired:raise HTTPException(401,'本地授权已失效，请重新连接Zotero')
     except ZoteroError:raise HTTPException(502,'Zotero未完成此操作，请刷新集合并重试；已有内容保留')
     finally:_sync_guard.release()

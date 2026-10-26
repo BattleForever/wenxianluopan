@@ -61,6 +61,8 @@ def job_count():
                 for (payload,) in db.execute(f'SELECT payload FROM {name}'):
                     if json.loads(payload).get('status') in ('queued', 'running', 'cancelling'):
                         count += 1
+        if 'browser_capture_jobs' in tables:
+            count+=sum(json.loads(row[0]).get('status') in ('queued','running','awaiting_access') for row in db.execute('SELECT payload FROM browser_capture_jobs'))
         if 'pdf_guide_jobs' in tables:
             count += db.execute("SELECT count(*) FROM pdf_guide_jobs WHERE status='generating'").fetchone()[0]
     return count

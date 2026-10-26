@@ -1,0 +1,56 @@
+#detail-dialog{z-index:190}
+#detail-dialog .dialog-heading{gap:8px;align-items:center;margin-bottom:18px}
+#detail-dialog .dialog-heading>.eyebrow{font-size:11px;letter-spacing:.04em;margin-right:auto;white-space:nowrap}
+#detail-dialog .detail-pin{font-size:10px;padding:5px 7px;white-space:nowrap;margin-left:0}
+#detail-dialog .paper-heading h2{font-size:19px;line-height:1.55;margin:0 0 8px}
+#detail-dialog .paper-heading-zh{font-size:14px;line-height:1.65;color:#9dc8d8;margin:5px 0 9px}
+#detail-dialog .paper-heading-meta,#detail-dialog .paper-heading-authors,#detail-dialog .paper-heading-metrics{font-size:11px;line-height:1.65;color:#8da8c0;margin:4px 0;overflow-wrap:anywhere}
+#detail-dialog .paper-heading-metrics{color:#9cb7cb;margin-top:8px}
+#detail-dialog .detail-actions{display:flex;flex-wrap:wrap;gap:7px;margin:16px 0 4px}
+#detail-dialog .detail-actions>button{padding:7px 11px;font-size:12px}
+.detail-more{position:relative;margin-left:auto;flex:none}
+.detail-more>summary{list-style:none;cursor:pointer;font-size:12px;padding:7px 9px;border:1px solid #314c66;border-radius:6px;color:#9fbdd3}
+.detail-more>summary::-webkit-details-marker{display:none}
+.detail-more>div{position:absolute;top:calc(100% + 7px);right:0;z-index:45;width:215px;padding:7px;border:1px solid #3b536e;border-radius:8px;background:#192d43;box-shadow:0 12px 30px #0007}
+.detail-more button{display:block;width:100%;max-width:100%;padding:9px;border:0;border-radius:4px;text-align:left;font-size:12px;background:transparent;color:#b8cfe1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.detail-more button:hover:not(:disabled){background:#28455f;color:#d8edf8}.detail-more button:disabled{color:#617b91}
+.detail-more hr{border:0;border-top:1px solid #304961;margin:5px}
+#detail-dialog .detail-tabs{margin:15px 0 18px;gap:18px}
+#detail-dialog .detail-tabs button{font-size:12px}
+#detail-dialog [hidden]{display:none!important}
+#detail-dialog .paper-abstract header{display:flex;justify-content:space-between;align-items:center;gap:10px;margin:0 0 10px}
+#detail-dialog .paper-abstract h3,#detail-dialog .paper-records h3{font-size:14px;color:#c5deec;font-weight:600;margin:0}
+#detail-dialog .abstract{font-size:13px;line-height:1.95;color:#b8cddd;overflow-wrap:anywhere}
+.paper-note,.paper-discovery,.paper-source-records{margin-top:18px;border-top:1px solid #2a4055;padding-top:12px}
+.paper-note>summary,.paper-discovery>summary,.paper-source-records>summary{cursor:pointer;color:#a1bcd1;font-size:12px;line-height:1.8}
+#detail-dialog .provenance{font-size:11px;line-height:1.9;padding:12px;background:#102235;border:0;border-radius:6px;margin:12px 0}
+.paper-records dl{display:grid;grid-template-columns:94px minmax(0,1fr);gap:10px 12px;margin:15px 0;font-size:12px;line-height:1.7}.paper-records dt{color:#7694ad}.paper-records dd{margin:0;color:#bed3e2;overflow-wrap:anywhere}.paper-records a{color:#86c2e7}
+#detail-reading-summary:empty{display:none}
+#detail-reading-summary .existing-block{border:0;background:#122c3c;border-left:2px solid #4bada9;padding:12px 14px;margin:0 0 20px;border-radius:0 7px 7px 0}
+#detail-reading-summary .existing-block h3{font-size:13px;color:#b7e4dd;margin:0 0 7px}
+#detail-reading-summary .existing-block .origin-badge{font-size:10px;margin:0 0 7px;color:#82aaa9}
+#detail-dialog .recommendation-evidence{margin:0 0 18px;padding:10px 12px;background:#122a3b}
+#detail-dialog .recommendation-evidence>summary{display:flex;gap:12px;align-items:center;cursor:pointer;color:#97c9d3;font-size:12px;list-style:none}
+#detail-dialog .recommendation-evidence>summary::before{content:'▸';font-size:10px;color:#739fb3}
+#detail-dialog .recommendation-evidence[open]>summary::before{content:'▾'}
+.recommendation-evidence>summary small{margin-left:auto;max-width:65%;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;font-size:10px;color:#7195aa}
+.paper-language-label{display:block;font-size:10px;line-height:1.5;letter-spacing:.04em;color:#7698af;margin:7px 0 4px}
+#detail-dialog .translation-missing{font-size:11px;color:#7693a9;line-height:1.7;margin:5px 0}
+#detail-dialog .translation-entry{font-size:11px;color:#8dd1ce;border:1px solid #315a65;border-radius:5px;background:#12313c;padding:5px 9px;margin:8px 0 3px;cursor:pointer}
+.bilingual-abstract{display:grid;gap:14px}
+.bilingual-abstract>section{border-left:2px solid #367ba9;background:#102337;padding:12px 14px;border-radius:0 7px 7px 0}
+.bilingual-abstract>#detail-abstract-zh{border-left-color:#4baba4;background:#102b35}
+#detail-dialog .bilingual-abstract h4{margin:0 0 9px;font-size:11px;font-weight:600;color:#7db9ca}
+#detail-dialog .bilingual-abstract p.abstract{margin:0}
+#detail-dialog .detail-tabs{gap:15px;overflow-x:auto;white-space:nowrap}
+#detail-dialog .detail-tabs button{flex:none}
+@media(max-width:480px){#detail-dialog .dialog-heading{gap:6px}#detail-dialog .paper-heading h2{font-size:17px}#detail-dialog .detail-tabs{gap:12px}#detail-dialog .detail-tabs button{font-size:11px}.paper-records dl{grid-template-columns:78px minmax(0,1fr)}}
+
+#detail-dialog .detail-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#detail-dialog .detail-actions>button{width:100%;min-width:0;padding:8px 5px;text-align:center;white-space:nowrap;font-size:11px}@media(max-width:520px){#detail-dialog .detail-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Long collection paths stay inside stable, keyboard-accessible controls. */
+#detail-dialog .detail-actions>button{box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;height:36px;line-height:18px;min-height:36px;max-width:100%;border-width:1px}
+#detail-dialog .detail-actions>button:focus-visible{outline:2px solid #83c8e1;outline-offset:2px}
+#detail-dialog #detail-organize,#detail-dialog #detail-zflush{grid-column:span 2;text-align:left;padding-inline:10px;color:#b4dce8}
+
+#detail-dialog #detail-ai{order:0}#detail-dialog #detail-pdfguide{order:1}#detail-dialog #detail-enrich{order:2}#detail-dialog #detail-seed{order:3}#detail-dialog #detail-organize{order:4}#detail-dialog #detail-zflush{order:5}#detail-dialog #detail-save{order:6;grid-column:1/-1;text-align:left;padding-inline:10px;color:#b4dce8}

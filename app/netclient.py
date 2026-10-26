@@ -22,6 +22,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from .config import ALLOWED_HOSTS, ZOTERO_BASE
+from . import network_settings as network
 from .db import get_db, get_bool_setting
 
 log = logging.getLogger("papernet.net")
@@ -30,7 +31,7 @@ UA = "PaperNet/0.1 (local literature tool)"
 TIMEOUT = (5, 15)
 
 # 网络不稳定环境下（TLS 重置/限流）的自动重试
-_SESSION = requests.Session()
+_SESSION = network.prepare_session(requests.Session())
 _SESSION.mount("https://", HTTPAdapter(max_retries=Retry(
     total=1, backoff_factor=0.5, status_forcelist=[429, 500, 502, 503, 504], respect_retry_after_header=False,
     allowed_methods=["GET"], raise_on_status=False)))
@@ -80,17 +81,31 @@ def is_online() -> bool:
 
 
 def _cache_key(url: str, params) -> str:
-    raw = url + "?" + json.dumps(params or {}, sort_keys=True, ensure_ascii=False)
+    safe={k:v for k,v in (params or {}).items() if k not in ('api_key','secretKey')}
+    raw = url + "?" + json.dumps(safe, sort_keys=True, ensure_ascii=False)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
 def _get_with_retry(url, params=None, timeout=TIMEOUT, attempts=1):
+    from .private_settings import service_candidates
+    values=dict(params or {})
+    keys=service_candidates('openalex') if urlparse(url).hostname=='api.openalex.org' else []
+    if keys:
+        for index,key in enumerate(keys):
+            _bump_net_stat('http_requests')
+            try:r=_SESSION.get(url,params={**values,'api_key':key},headers={'User-Agent':UA},timeout=timeout,allow_redirects=False,**network.proxy_options(url))
+            except requests.RequestException:
+                if index+1==len(keys):raise
+                _bump_net_stat('http_errors');continue
+            if r.status_code in (401,402,403,429) and index+1<len(keys):
+                _bump_net_stat('http_errors');continue
+            return r
     last = None
     for i in range(attempts):
         _bump_net_stat("http_requests")  # 每个 HTTP 尝试都计数（与缓存命中区分）
         try:
             return _SESSION.get(url, params=params,
-                                headers={"User-Agent": UA}, timeout=timeout)
+                                headers={"User-Agent": UA}, timeout=timeout,**network.proxy_options(url))
         except (requests.exceptions.SSLError, requests.exceptions.ConnectionError) as e:
             _bump_net_stat("http_errors")
             last = e
@@ -99,15 +114,20 @@ def _get_with_retry(url, params=None, timeout=TIMEOUT, attempts=1):
     raise last
 
 
-def cached_get_json(url: str, params=None, use_cache=True):
+def cached_get_json(url: str, params=None, use_cache=True,max_age=None):
     """GET 并缓存到本地 SQLite；离线模式下只允许命中缓存。返回 dict/list 或 None(404)。"""
     key = _cache_key(url, params)
     if use_cache:
         with get_db() as conn:
             row = conn.execute(
-                "SELECT status, body FROM fetch_cache WHERE key=?", (key,)
+                "SELECT status, body, fetched_at FROM fetch_cache WHERE key=?", (key,)
             ).fetchone()
-        if row is not None:
+        fresh=True
+        if row is not None and max_age is not None and is_online():
+            from datetime import datetime
+            try:fresh=time.time()-datetime.fromisoformat(row['fetched_at']).timestamp()<=max_age
+            except (ValueError,TypeError):fresh=False
+        if row is not None and fresh:
             _bump_net_stat("cache_hits")  # 缓存命中，未产生 HTTP 请求
             if row["status"] == 404:
                 return None
@@ -209,11 +229,11 @@ def oa_work_to_paper(w: dict) -> dict:
 
 def oa_work_by_doi(doi: str):
     doi = doi.replace("https://doi.org/", "").strip().lower()
-    return cached_get_json(f"{OA_BASE}/works/doi:{doi}", _oa_params())
+    return cached_get_json(f"{OA_BASE}/works/doi:{doi}", _oa_params(),max_age=86400)
 
 
 def oa_work_by_id(wid: str):
-    return cached_get_json(f"{OA_BASE}/works/{wid.rstrip('/').split('/')[-1]}", _oa_params())
+    return cached_get_json(f"{OA_BASE}/works/{wid.rstrip('/').split('/')[-1]}", _oa_params(),max_age=86400)
 
 
 def oa_works_by_ids(wids: list):
@@ -264,16 +284,20 @@ def oa_search_title(title: str, limit=5):
     return data.get("results", []) if data else []
 
 
-def oa_cited_by(wid: str, cap: int):
+def oa_cited_by(wid: str, cap: int|None=None):
     """cursor 分页迭代引用 wid 的论文（cited_by 方向）。"""
     cursor = "*"
     got = 0
-    while got < cap:
-        per = min(200, cap - got)
+    visited=set()
+    while cap is None or got < cap:
+        if cursor in visited:raise RuntimeError('OpenAlex 返回重复分页游标，未声明引用已取全')
+        visited.add(cursor)
+        per = 200 if cap is None else min(200, cap - got)
         data = cached_get_json(
             f"{OA_BASE}/works",
             _oa_params({"filter": f"cites:{wid}", "cursor": cursor,
                         "per-page": per, "select": OA_SELECT}),
+            max_age=3600,
         )
         if not data:
             break
@@ -330,11 +354,9 @@ def oc_citations(doi: str):
 # ---------------------------------------------------------------- Zotero 本地 API
 
 def zotero_get(path: str, params=None):
-    if not get_bool_setting("zotero_enabled"):
-        raise RuntimeError("Zotero 集成未启用（设置中开启）")
     # 路径全部由本程序构造，item key 段在调用处已按 ^[A-Za-z0-9]+$ 校验
     url = ZOTERO_BASE + path
-    resp = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=15)
+    resp = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=15,**network.proxy_options(url))
     if resp.status_code != 200:
         raise RuntimeError(f"Zotero 本地 API HTTP {resp.status_code}: {path} "
                            f"（请确认 Zotero 正在运行且设置中允许本地 API）")

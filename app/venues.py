@@ -13,6 +13,7 @@ from pathlib import Path
 
 import requests
 
+from . import network_settings as network
 from .config import DATA_DIR
 KEY_PATH = Path(os.environ.get('PAPERNET_METRIC_KEY_FILE', str(DATA_DIR / 'private' / 'easyscholar_key.txt')))
 CACHE_PATH = DATA_DIR / 'metrics_cache.jsonl'
@@ -100,13 +101,13 @@ def online_rank(name: str, key: str):
         if wait > 0:
             time.sleep(wait)
         _last_ts[0] = time.time()
-    resp = requests.get(
-        BASE,
-        params={"secretKey": key, "publicationName": name},
-        timeout=30,
-        headers={"User-Agent": "PaperNet/0.1"},
-        allow_redirects=False,
-    )
+    from .private_settings import service_candidates
+    keys=list(dict.fromkeys([key,*service_candidates('easyscholar')]))
+    for index,credential in enumerate(keys):
+        resp = requests.get(BASE,params={"secretKey":credential,"publicationName":name},timeout=30,headers={"User-Agent":"PaperNet/0.1"},allow_redirects=False,**network.proxy_options(BASE))
+        if resp.status_code in (401,402,403,429) and index+1<len(keys):continue
+        if resp.status_code==200 and resp.json().get('errCode') not in (0,None,'0') and index+1<len(keys):continue
+        break
     if resp.status_code != 200:
         raise RuntimeError(f"easyscholar HTTP {resp.status_code}")
     body = resp.json()

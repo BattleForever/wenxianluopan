@@ -1,5 +1,5 @@
 /* AI 速览面板（B 线）：唯一入口 window.WenxianAI.open(paperId, opts)。
-   自管弹窗与样式；打开面板只读已有结果，生成必须由明确按钮触发。
+   自管弹窗与样式；明确点击 AI 速览时可生成缺失结果，程序化打开默认只读。
    模型输出一律经 DOM textContent 插入，绝不作为 HTML。
 
    F1 修复（parallel_v02 B 线）：
@@ -35,7 +35,7 @@
     if (styleLoaded) return;
     var link = document.createElement('link');
     link.rel = 'stylesheet';
-    link.href = '/ai_brief.css?v=0.11.0';
+    link.href = '/ai_brief.css?v=0.17.6';
     document.head.appendChild(link);
     styleLoaded = true;
   }
@@ -103,6 +103,7 @@
   };
 
   var els = {};
+  var inFlight = new Map();
   function buildOverlay() {
     if (els.overlay) return;
     var overlay = h('div', 'wnai-overlay');
@@ -114,7 +115,7 @@
     header.appendChild(titleBox);
     var closeBtn = h('button', 'wnai-close', '×');
     closeBtn.setAttribute('aria-label', '关闭 AI 速览');
-    header.appendChild(closeBtn);
+    var actions=h('div','wnai-header-actions');header.appendChild(actions);header.appendChild(closeBtn);
     var banner = h('div', 'wnai-banner', '依据摘要生成 · 可展开原文依据核对');
     var status = h('div', 'wnai-status');
     var errorBox = h('div', 'wnai-error');
@@ -135,7 +136,7 @@
     }, true);
     els = {
       overlay: overlay, status: status, errorBox: errorBox,
-      sourceSec: sourceSec, genSec: genSec, resultSec: resultSec
+      sourceSec: sourceSec, genSec: genSec, resultSec: resultSec, actions:actions
     };
   }
 
@@ -173,8 +174,8 @@
   function updateGenBtn() {
     var btn = current.genBtn;
     if (!btn || current.pending) return;
-    btn.disabled = false;
-    btn.textContent = current.lastStatus === 'ready' ? '更新速览' : '生成速览';
+    btn.disabled = !current.abstract?.trim();
+    btn.textContent = current.lastStatus === 'ready' ? '重新生成' : current.lastStatus==='not_generated'?'生成速览':'重试';
   }
 
   function renderSource(paper) {
@@ -263,63 +264,26 @@
     } catch (e) { /* 端点不存在/网络失败：已有总结区块保持隐藏，不报错 */ }
   }
 
-  function renderGenerate(token) {
-    var sec = els.genSec;
-    sec.textContent = '';
-    // F4：按接口契约准确说明发送范围（题名+摘要）
-    sec.appendChild(h('p', null,
-      '根据题名和摘要，生成中文概览与研究要点。'));
-    var row = h('div');
-    var btn = h('button', null, current.lastStatus === 'ready' ? '更新速览' : '生成速览');
-    btn.id = 'wnai-generate-btn';
-    btn.setAttribute('aria-label', '生成本篇论文的 AI 速览');
-    var forceLabel = h('label', 'wnai-force');
-    var forceChk = document.createElement('input');
-    forceChk.type = 'checkbox'; forceChk.id = 'wnai-force';
-    forceLabel.appendChild(forceChk);
-    forceLabel.appendChild(document.createTextNode('强制重新生成'));
-    row.appendChild(btn);var settings=h('details','wnai-generation-options');settings.appendChild(h('summary',null,'生成选项'));settings.appendChild(forceLabel);settings.appendChild(h('p',null,'仅将本篇题名与摘要发送到当前配置的模型。'));row.appendChild(settings);
-    sec.appendChild(row);
-    btn.addEventListener('click', async function () {
-      if (current.pending) return; // 请求进行中禁止重复发起
-      current.pending = true;
-      btn.disabled = true;
-      btn.textContent = '正在生成…';
-      els.errorBox.hidden = true;
-      var myToken = current.token;
-      async function restoreOldResult() {
-        // 失败后旧结果不被毁掉：只读 GET 恢复展示（仍有效缓存），错误信息保留
-        try {
-          var old = await api('/api/ai/briefs/' + current.paperId);
-          if (myToken !== current.token) return;
-          if (old && old.status === 'ready') applyState(old, { keepError: true });
-        } catch (e) { /* 恢复失败保持现状 */ }
-      }
-      try {
-        var data = await api('/api/ai/briefs', {
-          paper_id: current.paperId, source_kind: 'abstract',
-          force: forceChk.checked || current.lastStatus === 'ready'
-        });
-        if (myToken !== current.token) return; // 面板已切换到别的论文，丢弃晚到响应
-        applyState(data);
-        if (data.status !== 'ready') await restoreOldResult();
-      } catch (err) {
-        if (myToken !== current.token) return;
-        showError(err.payload && err.payload.error && err.payload.error.code,
-          err.message);
-        setStatus([h('span', null, '生成失败。可点击按钮重试；已有结果与上方摘要保持不变。')]);
-        current.pending = false;
-        updateGenBtn();
-        await restoreOldResult();
-        return;
-      } finally {
-        if (myToken === current.token) {
-          current.pending = false;
-          updateGenBtn(); // 错误后按钮恢复；错误信息保留在上方
-        }
-      }
+  function renderGenerate() {
+    els.genSec.textContent='';els.genSec.hidden=true;els.actions.textContent='';
+    var btn=h('button','wnai-regenerate','生成速览');btn.id='wnai-generate-btn';btn.type='button';
+    btn.setAttribute('aria-label','重新生成或重试本篇 AI 速览');els.actions.appendChild(btn);current.genBtn=btn;
+    btn.addEventListener('click',async function(){
+      if(current.pending)return;
+      var myToken=current.token,pid=current.paperId,force=current.lastStatus==='ready';
+      current.pending=true;btn.disabled=true;btn.textContent='正在生成…';els.errorBox.hidden=true;
+      setStatus([h('span',null,'正在生成速览…')]);
+      async function restoreOldResult(){try{var old=await api('/api/ai/briefs/'+pid);if(myToken===current.token&&old.status==='ready')applyState(old,{keepError:true});}catch(e){}}
+      try{
+        var request=inFlight.get(pid);
+        if(!request){request=api('/api/ai/briefs',{paper_id:pid,source_kind:'abstract',force:force});inFlight.set(pid,request);
+          (function(value,id){value.then(function(){if(inFlight.get(id)===value)inFlight.delete(id);},function(){if(inFlight.get(id)===value)inFlight.delete(id);});})(request,pid);}
+        var data=await request;if(myToken!==current.token)return;applyState(data);if(data.status!=='ready')await restoreOldResult();
+      }catch(err){
+        if(myToken!==current.token)return;showError(err.payload&&err.payload.error&&err.payload.error.code,err.message);
+        setStatus([h('span',null,'生成未完成，可重试；已有结果保留。')]);await restoreOldResult();
+      }finally{if(myToken===current.token){current.pending=false;updateGenBtn();}}
     });
-    current.genBtn = btn;
   }
 
   // 复用来源标注（§3.1）：A 线在 brief 响应里提供 reuse 字段（形状宽容解析）：
@@ -508,7 +472,7 @@
     } else if (data.status === 'not_generated') {
       showError(null);
       els.resultSec.appendChild(h('p', 'wnai-muted',
-        '尚无 AI 速览结果。点击上方"生成速览"按钮开始生成。'));
+        '尚无 AI 速览结果。'));
     } else if (data.status === 'missing_source') {
       els.resultSec.appendChild(h('p', 'wnai-muted',
         '缺少摘要：请先在库内补全本篇论文的摘要元数据，再生成速览。'));
@@ -535,6 +499,7 @@
     els.errorBox.hidden = true;
     els.sourceSec.textContent = '';
     els.genSec.textContent = '';
+    els.actions.textContent='';
     els.resultSec.textContent = '';
     setStatus([h('span', null, '正在读取论文信息…')]);
     els.resultSec.appendChild(h('p', 'wnai-muted', '正在读取 AI 速览状态…'));
@@ -542,16 +507,23 @@
     var focusTarget = els.overlay.querySelector('.wnai-close');
     if (focusTarget) focusTarget.focus(); // 焦点进入 AI 面板，不留在被关闭的详情里
     try {
-      // 1) 论文信息：立即渲染来源区 + 动作区（新论文打开即有可点生成按钮）
+      // 1) 先读论文信息，动作按钮在缓存状态确认后启用。
       var paper = await api('/api/papers/' + pid);
       if (token !== current.token || current.paperId !== pid) return;
       setStatus([h('span', null, '正在读取 AI 速览状态…')]);
       renderSource(paper);
-      renderGenerate(token);
+
       // 2) 已有结果状态（只读，不触发生成）
       var data = await api('/api/ai/briefs/' + pid);
       if (token !== current.token || current.paperId !== pid) return;
-      applyState(data);
+      renderGenerate();applyState(data);
+      if(opts&&opts.generateIfMissing&&data.status==='not_generated'&&paper.abstract&&paper.abstract.trim()){
+        var gate=await Promise.all([api('/api/ai/config'),api('/api/settings')]);
+        if(token!==current.token||els.overlay.hidden)return;
+        if(current.lastStatus!=='not_generated'||current.pending)return;
+        if(gate[0].configured&&gate[1].offline_mode!=='1'){current.genBtn.click();}
+        else{showError(gate[1].offline_mode==='1'?'offline_mode':'not_configured');}
+      }
     } catch (err) {
       if (token !== current.token || current.paperId !== pid) return;
       clearResult();

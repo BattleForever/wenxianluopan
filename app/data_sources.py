@@ -20,6 +20,15 @@ def save(body:dict):
     if not key.strip() and body.get('clear') is not True:raise HTTPException(400,'请填写密钥，或选择删除已保存的配置')
     with LOCK:
         path=DATA_DIR/'private'/'data_sources.local.json';value=read_json(path)
+        if isinstance(value.get('connections'),list):
+            from . import source_profiles
+            if body.get('clear') is True:
+                value['connections']=[x for x in value['connections'] if x.get('service')!=name]
+                source_profiles.write(value)
+            else:
+                previous=next((x for x in value['connections'] if x.get('service')==name),{})
+                source_profiles.save_connection({'id':previous.get('id'),'name':previous.get('name') or name,'service':name,'api_key':key.strip(),'enabled':True})
+            return {'saved':True,**status()}
         value[name]=None if body.get('clear') is True else key.strip()
         try:atomic_json(path,value)
         except OSError:raise HTTPException(500,'数据源设置保存失败')
@@ -31,6 +40,8 @@ def import_metrics_cache(body:dict):
     from .linkview import number,zone_number
     text=body.get('text')
     if not isinstance(text,str) or len(text.encode('utf-8'))>8_000_000:raise HTTPException(400,'请选择不超过 8 MB 的期刊指标 JSONL 文件')
+    from .metric_catalog import import_text
+    text=import_text(text)
     lines=[line for line in text.splitlines() if line.strip()]
     if len(lines)>10000:raise HTTPException(400,'每次最多导入 10000 条期刊指标')
     records={};rejected=0

@@ -24,6 +24,7 @@ import json
 import sqlite3
 from typing import Any, Callable
 
+from . import network_settings as network
 from .library_migrate import compute_source_hash
 
 ZH_FIELDS = ("title_zh", "abstract_zh")
@@ -126,7 +127,7 @@ def _network_lookup(paper: dict, conn: sqlite3.Connection) -> dict | None:
     try:
         resp = requests.get(f"https://api.crossref.org/works/{doi}",
                             timeout=(5, 15),
-                            headers={"User-Agent": "PaperNet/0.1 (mailto:local)"})
+                            headers={"User-Agent": "PaperNet/0.1 (mailto:local)"},**network.proxy_options("https://api.crossref.org"))
         if resp.status_code != 200:
             raise ZoteroLookupError(f"Crossref {doi} -> HTTP {resp.status_code}")
         msg = (resp.json() or {}).get("message") or {}
@@ -183,8 +184,7 @@ def get_existing_content(db_path_or_conn, paper_id: int, *,
         zotero_data = None
         network_data = None
         need_raw = any(not (paper.get(f) or "").strip() for f in ("title", "abstract"))
-        if need_raw and zotero and \
-                (_get_setting(conn, "zotero_enabled") in (None, "1")):
+        if need_raw and zotero:
             try:
                 zotero_data = _zotero_lookup(paper)
             except ZoteroLookupError as e:

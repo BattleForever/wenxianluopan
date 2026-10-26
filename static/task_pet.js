@@ -13,7 +13,7 @@
  function bounds(){return {w:dock.offsetWidth||100,h:dock.offsetHeight||104,vw:innerWidth,vh:innerHeight};}
  function place(x,y,save=false){
   const b=bounds(),left=clamp(x,8,b.vw-b.w-8),top=clamp(y,8,b.vh-b.h-8);
-  dock.style.left=left+'px';dock.style.top=top+'px';dock.style.right='auto';dock.style.bottom='auto';
+  dock.classList.toggle('pet-on-left',left<220);dock.style.left=left+'px';dock.style.top=top+'px';dock.style.right='auto';dock.style.bottom='auto';
   if(save){ratio={x:(left-8)/Math.max(1,b.vw-b.w-16),y:(top-8)/Math.max(1,b.vh-b.h-16)};try{localStorage.setItem(KEY,JSON.stringify(ratio));}catch(e){}}
   const cw=card.offsetWidth||272,ch=card.offsetHeight||160;
   card.style.left=clamp(left+b.w-cw,8,b.vw-cw-8)+'px';
@@ -26,6 +26,18 @@
  orb.addEventListener('pointerup',finish);orb.addEventListener('pointercancel',finish);orb.addEventListener('lostpointercapture',finish);
  orb.addEventListener('click',e=>{if(performance.now()<suppressUntil){e.preventDefault();e.stopImmediatePropagation();}},true);
  orb.addEventListener('keydown',e=>{const delta={ArrowLeft:[-1,0],ArrowRight:[1,0],ArrowUp:[0,-1],ArrowDown:[0,1]}[e.key];if(!delta)return;e.preventDefault();const r=dock.getBoundingClientRect(),step=e.shiftKey?32:12;place(r.left+delta[0]*step,r.top+delta[1]*step,true);});
+ let layerFrame,layerSequence=0;const modalOrder=new WeakMap();
+ function syncLayer(){
+  const modal=[...document.querySelectorAll('dialog:modal')].sort((a,b)=>(modalOrder.get(a)||0)-(modalOrder.get(b)||0)).at(-1),parent=modal||document.body;
+  const moved=dock.parentElement!==parent;if(moved)parent.append(dock);
+  if(typeof dock.showPopover==='function'){
+   if(!dock.hasAttribute('popover'))dock.setAttribute('popover','manual');
+   try{if(moved&&dock.matches(':popover-open'))dock.hidePopover();if(!dock.matches(':popover-open'))dock.showPopover();}catch(e){}
+  }
+  restore();
+ }
+ const layerObserver=new MutationObserver(records=>{for(const r of records)if(r.type==='attributes'&&r.attributeName==='open'&&r.target.matches('dialog:modal'))modalOrder.set(r.target,++layerSequence);cancelAnimationFrame(layerFrame);layerFrame=requestAnimationFrame(syncLayer);});
+ layerObserver.observe(document.body,{childList:true,subtree:true,attributes:true,attributeFilter:['open']});syncLayer();
  const value=dock.querySelector('.task-orb-value');
  function status(){dock.classList.toggle('pet-has-status',!['•','0%'].includes(value.textContent));if(!drag)restore();}
  new MutationObserver(status).observe(value,{childList:true,characterData:true,subtree:true});

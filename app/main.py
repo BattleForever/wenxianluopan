@@ -31,8 +31,12 @@ init_db()
 
 app = FastAPI(title="文献罗盘", version=__version__, docs_url=None, redoc_url=None)
 
-from . import workspace_data
+from . import workspace_data,network_settings,pdf_storage,browser_capture
 app.include_router(workspace_data.router)
+app.include_router(network_settings.router)
+app.include_router(pdf_storage.router)
+browser_capture.init()
+app.include_router(browser_capture.router)
 
 @app.middleware('http')
 async def workspace_transfer_guard(request, call_next):
@@ -44,6 +48,10 @@ async def workspace_transfer_guard(request, call_next):
         app.state.workspace_requests = getattr(app.state, 'workspace_requests', 0) + 1
     try:
         return await call_next(request)
+    except Exception as error:
+        from .request_errors import record
+        identifier=record(request,error)
+        return JSONResponse(status_code=500,content={'detail':'本次操作未完成，请重试；已保留本地诊断记录。','error_id':identifier})
     finally:
         if api_request and not exempt:
             app.state.workspace_requests -= 1
@@ -864,6 +872,12 @@ from . import folders
 app.include_router(folders.router)
 from . import data_sources
 app.include_router(data_sources.router)
+from . import metric_catalog
+app.include_router(metric_catalog.router)
+from . import connection_status
+app.include_router(connection_status.router)
+from . import source_profiles
+app.include_router(source_profiles.router)
 from . import metadata_jobs
 metadata_jobs.init()
 app.include_router(metadata_jobs.router)
@@ -880,6 +894,8 @@ app.include_router(pdf_access.router)
 from . import workspace
 workspace.init()
 app.include_router(workspace.router)
+from . import task_center
+app.include_router(task_center.router)
 
 from . import trash
 app.include_router(trash.router)
@@ -946,6 +962,12 @@ def _open_browser():
         try:open_ready(f"http://{HOST}:{PORT}", DATA_DIR, __version__)
         except RuntimeError as error:logging.getLogger(__name__).warning('%s', error)
 
+
+
+
+@app.on_event('shutdown')
+def stop_capture_browser():
+    browser_capture.stop_all()
 
 if __name__ == "__main__":
     threading.Thread(target=_open_browser, daemon=True).start()

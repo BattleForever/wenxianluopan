@@ -59,6 +59,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from . import network_settings as network
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
@@ -84,7 +85,7 @@ METADATA_FILL_PROMPT_VERSION = "metadata_fill_v1"
 # 回退到项目根目录的 ai_config.local.json（不存在则 not_configured）。
 DEFAULT_CONFIG_FILE = Path(__file__).resolve().parent.parent / "ai_config.local.json"
 DEFAULT_REQUEST_MODEL = "deepseek-v4-flash-780k-local"
-ALLOWED_LLM_HOSTS = {"modelgateway.zju.edu.cn", "api.deepseek.com", "api.openai.com"}
+ALLOWED_LLM_HOSTS = {"modelgateway.zju.edu.cn", "api.deepseek.com", "api.openai.com", "dashscope.aliyuncs.com", "api.moonshot.cn", "open.bigmodel.cn", "api.siliconflow.cn", "generativelanguage.googleapis.com"}
 LLM_TIMEOUT = (15, 300)  # (连接, 读取) 秒；本地大上下文模型生成较慢，读取上限放宽
 _MAX_TEXT = 4000  # 单字段输出长度上限，防止异常超长输出
 
@@ -131,17 +132,56 @@ def _config_path() -> Path:
     return Path(os.environ.get("PAPERNET_AI_CONFIG_FILE") or DEFAULT_CONFIG_FILE)
 
 
-def valid_llm_url(url):
+def local_model_base(url):
+    """Only explicit loopback OpenAI API paths, never arbitrary local URLs."""
+    from urllib.parse import urlparse
+    try:
+        u=urlparse(url)
+        return (u.scheme in ('http','https') and u.hostname in ('127.0.0.1','::1','localhost')
+                and u.port is not None and 1024<=u.port<=65535
+                and u.path.rstrip('/').endswith('/v1')
+                and not u.username and not u.password and not u.query and not u.fragment)
+    except (ValueError,TypeError):return False
+
+
+def valid_model_base(url):
     from urllib.parse import urlparse
     if not isinstance(url,str) or any(ord(ch)<33 for ch in url):
         return False
     try:
         u=urlparse(url)
-        return (u.scheme=='https' and u.hostname in ALLOWED_LLM_HOSTS
+        host=(u.hostname or '').lower()
+        import ipaddress
+        try:public=ipaddress.ip_address(host).is_global
+        except ValueError:public='.' in host and not host.endswith(('.localhost','.local','.internal','.invalid','.test'))
+        return local_model_base(url) or (u.scheme=='https' and public
                 and not u.username and not u.password and not u.query
                 and not u.fragment and u.port in (None,443))
     except ValueError:
         return False
+
+def valid_llm_url(url):
+    from urllib.parse import urlparse
+    if not valid_model_base(url.removesuffix('/chat/completions')):return False
+    if urlparse(url).hostname in ALLOWED_LLM_HOSTS:return True
+    # Custom hosts are usable only after explicit local connection configuration.
+    from .private_settings import read_json
+    raw=read_json(_config_path())
+    configured=[p.get('base_url','') for p in raw.get('profiles',[]) if isinstance(p,dict)]
+    if isinstance(raw.get('llm'),dict):configured.append(raw['llm'].get('base_url',''))
+    return any(base and url.rstrip('/') in (base.rstrip('/'),base.rstrip('/')+'/chat/completions') for base in configured)
+
+def check_model_destination(url):
+    from urllib.parse import urlparse
+    import ipaddress,socket
+    base=url.removesuffix('/chat/completions')
+    if local_model_base(base):return
+    if not valid_model_base(url):raise LLMServiceError('invalid_endpoint','请使用 HTTPS 模型地址，或本机兼容接口（如 http://127.0.0.1:端口/v1）')
+    host=urlparse(url).hostname
+    if host in ALLOWED_LLM_HOSTS:return
+    try:addresses=socket.getaddrinfo(host,443,type=socket.SOCK_STREAM)
+    except OSError:raise LLMServiceError('network_error','模型接口域名无法解析')
+    if not addresses or any(not ipaddress.ip_address(x[4][0]).is_global for x in addresses):raise LLMServiceError('invalid_endpoint','不能连接本机或内网模型地址')
 
 
 def load_ai_config() -> dict | None:
@@ -164,7 +204,7 @@ def load_ai_config() -> dict | None:
     if not isinstance(base,str):return None
     url = llm.get("chat_completions_url") or (base.rstrip("/") + "/chat/completions")
     key = llm.get('api_key') if isinstance(raw.get('profiles'),list) else (os.environ.get("PAPERNET_LLM_API_KEY") or llm.get("api_key"))
-    model = llm.get("model") or DEFAULT_REQUEST_MODEL
+    model = llm.get("model") if isinstance(raw.get('profiles'),list) else (llm.get("model") or DEFAULT_REQUEST_MODEL)
     if (not isinstance(key,str) or not key.strip() or len(key)>8192
             or any(ord(ch)<32 or ord(ch)==127 for ch in key)
             or not isinstance(model,str) or not model.strip() or len(model)>200
@@ -173,7 +213,12 @@ def load_ai_config() -> dict | None:
     if not valid_llm_url(url):
         log.warning("AI 配置的 LLM 地址不在固定 HTTPS 白名单内，已拒绝")
         return None
-    return {"chat_url": url, "request_model": model, "api_key": str(key)}
+    keys=llm.get('api_keys')
+    valid_keys=[k for k in keys if isinstance(k,str) and k and len(k)<=8192 and not any(ord(c)<32 or ord(c)==127 for c in k)] if isinstance(keys,list) else []
+    profile=next((p for p in raw.get('profiles',[]) if isinstance(p,dict) and p.get('id')==raw.get('active_profile_id')), {})
+    try:limit=max(1,min(8,int(profile.get('max_concurrency',1))))
+    except (ValueError,TypeError):limit=1
+    return {"chat_url":url,"request_model":model,"api_key":str(key),'api_keys':valid_keys or [str(key)],'profile_id':profile.get('id'),'max_concurrency':limit}
 
 
 # ------------------------------------------------------------------ 统一生成闸门（V4R1-01）
@@ -217,19 +262,26 @@ def ai_generation_blocked(conn=None, check_config: bool = True) -> dict | None:
 _RETRYABLE_STATUS = {502, 503, 504}
 
 
-def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 2000, *, timeout=None, retry=True) -> tuple[str, str]:
-    """调用模型，返回 (content, 响应 model 名)。至多一次有理由重试。
+def call_llm(cfg:dict,system_prompt:str,user_prompt:str,max_tokens:int=2000,*,timeout=None,retry=True):
+    from .model_limits import slot,Cancelled
+    blocked=ai_generation_blocked(check_config=False)
+    if blocked:raise LLMServiceError(blocked['code'],blocked['message'])
+    try:
+        with slot(cfg):return _call_llm(cfg,system_prompt,user_prompt,max_tokens,timeout=timeout,retry=retry)
+    except Cancelled:raise LLMServiceError('cancelled','任务已停止，未开始新的模型请求')
 
-    重试仅限：连接错误/超时/网关 5xx。401/403/429/3xx 不重试。
-    抛出 LLMServiceError（code/message 已脱敏）。
 
-    V4R1-01：最底层传输入口统一闸门——离线模式在此直接拒绝（不发出任何
-    HTTP 请求）。调用方（AI 速览/字段提供者）在此之上还有各自的入口闸门，
-    形成纵深防御：即使未来新增调用点绕过上层检查，离线时依然零外呼。
-    """
+def _call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 2000, *, timeout=None, retry=True) -> tuple[str, str]:
+    """Generate explicitly; reject offline before DNS, then fail over auth/quota keys."""
     blocked = ai_generation_blocked(check_config=False)
-    if blocked is not None:
-        raise LLMServiceError(blocked["code"], blocked["message"])
+    if blocked is not None:raise LLMServiceError(blocked['code'],blocked['message'])
+    keys=cfg.get('api_keys') or [cfg['api_key']]
+    if len(keys)>1:
+        for index,key in enumerate(keys):
+            try:return _call_llm({**cfg,'api_key':key,'api_keys':[key]},system_prompt,user_prompt,max_tokens,timeout=timeout,retry=retry)
+            except LLMServiceError as e:
+                if e.code not in ('auth_failed','rate_limited','quota_exceeded') or index+1==len(keys):raise
+    check_model_destination(cfg['chat_url'])
     payload = {
         "model": cfg["request_model"],
         "messages": [
@@ -245,8 +297,10 @@ def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 
     last_error: LLMServiceError | None = None
     for attempt in ((1,2) if retry else (1,)):
         try:
+            local=local_model_base(cfg['chat_url'].removesuffix('/chat/completions'))
             resp = requests.post(cfg["chat_url"], json=payload, headers=headers,
-                                 timeout=timeout or LLM_TIMEOUT, allow_redirects=False)
+                                 timeout=timeout or LLM_TIMEOUT, allow_redirects=False,
+                                 **({'proxies':dict(network.DIRECT)} if local else network.proxy_options(cfg['chat_url'])))
         except requests.exceptions.Timeout:
             last_error = LLMServiceError("timeout", "模型请求超时，请稍后重试")
             log.warning("AI 请求超时（第 %d 次）", attempt)
@@ -263,6 +317,8 @@ def call_llm(cfg: dict, system_prompt: str, user_prompt: str, max_tokens: int = 
                                       "模型鉴权失败（HTTP %d），请检查本地配置中的密钥" % resp.status_code)
             if resp.status_code == 429:
                 raise LLMServiceError("rate_limited", "模型限流（429），请稍后重试")
+            if resp.status_code == 402:
+                raise LLMServiceError('quota_exceeded','当前密钥额度不足')
             if resp.status_code >= 500:
                 last_error = LLMServiceError("service_error",
                                              "模型服务错误（HTTP %d），请稍后重试" % resp.status_code)

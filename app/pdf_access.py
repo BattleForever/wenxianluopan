@@ -5,6 +5,8 @@ from urllib.parse import urlparse,urljoin
 import fitz
 import requests
 from fastapi import APIRouter,HTTPException,Request
+from pydantic import BaseModel,Field
+from . import network_settings as network
 from .db import get_db
 from .config import PDF_DIR
 from . import metadata_sources,pdf_guide
@@ -58,6 +60,8 @@ def public_source(p):
     f=Path(p.get('local_pdf_path') or '')
     if not f.is_file():return None
     try:
+        with f.open('rb') as stream:
+            if stream.read(5)!=b'%PDF-':return {'ready':False,'reading_ready':False,'reading_issue':'文件不是有效的PDF，请重新取得原文'}
         if f.stat().st_size>MAX_BYTES:return {'ready':False,'reading_ready':False,'reading_issue':'PDF超过40 MB，请选择较小版本'}
         with fitz.open(f) as d:
             if d.needs_pass:return {'ready':False,'reading_ready':False,'reading_issue':'PDF已加密，请先解锁后上传'}
@@ -70,7 +74,11 @@ def public_source(p):
 @router.get('/{pid}/pdf-access')
 def status(pid:int):
     p=paper(pid)
-    return {**(public_source(p) or {'ready':False}), 'has_public_link':bool(p.get('oa_pdf_url')),
+    if p.get('local_pdf_path') and not Path(p['local_pdf_path']).is_file():
+        from .zotero_pdf import refresh_location
+        if refresh_location(pid):p=paper(pid)
+    from .pdf_storage import describe
+    return {**(public_source(p) or {'ready':False}),**describe(pid), 'has_public_link':bool(p.get('oa_pdf_url')),
             'doi_url':'https://doi.org/'+p['doi'] if p.get('doi') else None}
 
 @router.post('/{pid}/pdf-access/find')
@@ -92,11 +100,16 @@ def find(pid:int):
 
 @router.post('/{pid}/pdf-access/upload')
 async def upload(pid:int,request:Request):
+    from .pdf_storage import policy
+    if policy().get('mode')=='ask' and not request.query_params.get('destination'):raise HTTPException(409,'请先选择本次保存目录')
     paper(pid);raw=bytearray()
     async for part in request.stream():
         raw.extend(part)
         if len(raw)>MAX_BYTES:raise HTTPException(413,'PDF超过40 MB')
-    return save_pdf(pid,bytes(raw))
+    saved=save_pdf(pid,bytes(raw))
+    from .pdf_storage import finalize
+    from starlette.concurrency import run_in_threadpool
+    return await run_in_threadpool(finalize,pid,request.query_params.get('destination'))
 
 def checked_url(url):
     try:u=urlparse(url);port=u.port
@@ -105,7 +118,6 @@ def checked_url(url):
         raise HTTPException(422,'此公开地址暂不支持直接下载，可在出版商页面下载后上传PDF')
     return url
 
-@router.post('/{pid}/pdf-access/download')
 def download(pid:int):
     with get_db() as c:ensure_active(c,[pid])
     p=paper(pid)
@@ -116,11 +128,17 @@ def download(pid:int):
     if not url:
         find(pid);url=paper(pid).get('oa_pdf_url')
     if not url:raise HTTPException(404,'未找到公开PDF，请前往出版商获取或上传本机文件')
+    return download_url(pid,url)
+
+
+def download_url(pid,url):
+    with get_db() as c:ensure_active(c,[pid])
+    if not is_online():raise HTTPException(409,'当前离线，不下载新文件')
     try:
-        with requests.Session() as session:
+        with network.prepare_session(requests.Session()) as session:
             for _ in range(6):
                 checked_url(url)
-                with session.get(url,timeout=(8,25),allow_redirects=False,stream=True,headers={'User-Agent':'WenxianLuopan scholarly reader'}) as response:
+                with session.get(url,timeout=(8,25),allow_redirects=False,stream=True,headers={'User-Agent':'WenxianLuopan scholarly reader'},**network.proxy_options(url)) as response:
                     if response.status_code in (301,302,303,307,308):
                         url=urljoin(url,response.headers.get('Location',''));continue
                     if response.status_code!=200:raise HTTPException(502,'公开全文本次无法下载，请稍后重试或上传本机PDF')
@@ -131,3 +149,20 @@ def download(pid:int):
                     return save_pdf(pid,bytes(raw))
             raise HTTPException(502,'公开地址跳转过多，请从出版商获取PDF')
     except requests.RequestException:raise HTTPException(502,'PDF下载连接未成功，请重试或上传本机文件')
+
+
+class DownloadIn(BaseModel):
+    destination:str|None=Field(default=None,max_length=2048)
+
+@router.post('/{pid}/pdf-access/download')
+def download_request(pid:int,body:DownloadIn|None=None):
+    from .pdf_storage import policy,finalize
+    destination=body.destination if body else None
+    if policy().get('mode')=='ask' and not destination:raise HTTPException(409,'请先选择本次保存目录')
+    download(pid)
+    return finalize(pid,destination)
+
+@router.post('/{pid}/pdf-access/save')
+def save_request(pid:int,body:DownloadIn|None=None):
+    from .pdf_storage import finalize
+    return finalize(pid,body.destination if body else None)

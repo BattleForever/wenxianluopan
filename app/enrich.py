@@ -34,6 +34,7 @@ import json
 import logging
 import sqlite3
 
+from . import network_settings as network
 from .library_migrate import compute_source_hash, norm_doi
 
 log = logging.getLogger("papernet.enrich")
@@ -228,9 +229,6 @@ def _zotero_fetch(conn, paper: dict) -> tuple[dict | None, tuple[str, str] | Non
     五种错误分别上报（§3.1）；命中条目 DOI 与请求 DOI 不同 → 不复用。"""
     from .zotero_client import (ZoteroAuthRequired, ZoteroClient, ZoteroError,
                                 ZoteroUnavailable)
-    if _get_setting(conn, "zotero_enabled") not in (None, "1"):
-        return None, ("zotero_not_enabled",
-                      "Zotero 同步未启用（settings.zotero_enabled=0），跳过 Zotero 补全")
     client = ZoteroClient()
     try:
         client.ping()
@@ -305,7 +303,7 @@ def _network_fetch(conn, paper: dict, errors: list, missing: list[str]) -> dict 
     try:
         resp = requests.get(f"https://api.crossref.org/works/{doi}",
                             timeout=_NETWORK_TIMEOUT,
-                            headers={"User-Agent": "PaperNet/0.1 (mailto:local)"})
+                            headers={"User-Agent": "PaperNet/0.1 (mailto:local)"},**network.proxy_options("https://api.crossref.org"))
         if resp.status_code != 200:
             for f in missing:
                 errors.append({"field": f, "code": "network_failed",

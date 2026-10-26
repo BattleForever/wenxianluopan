@@ -199,7 +199,7 @@ class Items(BaseModel):
     ids:list[int]=Field(min_length=1,max_length=500)
     folder_ids:list[int]=Field(default_factory=list,max_length=50)
     scope:Scope
-    action:Literal['add','move','remove']='add'
+    action:Literal['add','move','remove','replace']='add'
     source_folder_id:int|None=Field(default=None,gt=0)
     source_descendants:bool=False
 
@@ -209,7 +209,7 @@ def assign(body:Items):
     with get_db() as c:
         c.execute('BEGIN IMMEDIATE');targets=list(dict.fromkeys(body.folder_ids))
         trash.ensure_active(c,body.ids)
-        if not targets:raise HTTPException(400,'请选择至少一个文件夹')
+        if not targets and body.action!='replace':raise HTTPException(400,'请选择至少一个文件夹')
         for fid in targets:
             if get(c,fid)['scope']!=body.scope:raise HTTPException(400,'目标文件夹与工作区不一致')
         if body.source_folder_id is not None and get(c,body.source_folder_id)['scope']!=body.scope:raise HTTPException(400,'来源文件夹与工作区不一致')
@@ -218,11 +218,13 @@ def assign(body:Items):
         for pid in ids:
             if not c.execute('SELECT 1 FROM papers WHERE id=?',(pid,)).fetchone():raise HTTPException(404,'部分文献已不存在，请刷新后重试')
         before=snapshot(c,body.scope,ids)
-        if body.action in ('add','move'):
+        if body.action in ('add','move','replace'):
             if body.scope=='library':c.executemany("UPDATE papers SET status='library' WHERE id=?",[(pid,) for pid in ids])
             else:
                 trash.restore_in(c,'reading',ids)
                 c.executemany('INSERT OR IGNORE INTO reading_list(paper_id) VALUES(?)',[(pid,) for pid in ids])
+        if body.action=='replace':
+            c.executemany('DELETE FROM organizer_items WHERE paper_id=? AND folder_id IN (SELECT id FROM organizer_folders WHERE scope=?)',[(pid,body.scope) for pid in ids])
         if body.action=='move':
             origins=descendants(c,body.source_folder_id) if body.source_descendants else [body.source_folder_id]
             c.executemany('DELETE FROM organizer_items WHERE folder_id=? AND paper_id=?',[(fid,pid) for fid in origins for pid in ids])
@@ -232,6 +234,24 @@ def assign(body:Items):
         else:c.executemany('INSERT OR IGNORE INTO organizer_items VALUES(?,?)',[(fid,pid) for fid in targets for pid in ids])
         token=remember(c,body.scope,before)
     return {'affected':len(ids),'undo_token':token}
+
+@router.get('/locations/{pid}')
+def locations(pid:int,scope:Scope='library'):
+    from .trash import ensure_active
+    with get_db() as c:
+        ensure_active(c,[pid])
+        p=c.execute('SELECT status FROM papers WHERE id=?',(pid,)).fetchone()
+        if not p:raise HTTPException(404,'文献不存在')
+        collected=p['status']=='library' if scope=='library' else bool(c.execute("SELECT 1 FROM reading_list WHERE paper_id=? AND paper_id NOT IN (SELECT paper_id FROM paper_trash WHERE scope='reading')",(pid,)).fetchone())
+        tree={r['id']:dict(r) for r in c.execute('SELECT * FROM organizer_folders WHERE scope=?',(scope,))}
+        ids=[r[0] for r in c.execute('SELECT folder_id FROM organizer_items WHERE paper_id=? ORDER BY folder_id',(pid,)) if r[0] in tree]
+    paths=[]
+    for fid in ids:
+        names=[];seen=set()
+        while fid in tree and fid not in seen:
+            seen.add(fid);names.insert(0,tree[fid]['name']);fid=tree[fid]['parent_id']
+        paths.append(' / '.join(names))
+    return {'paper_id':pid,'scope':scope,'collected':collected,'folder_ids':ids,'paths':paths}
 
 @router.post('/undo/{token}')
 def undo(token:str):

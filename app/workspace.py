@@ -6,7 +6,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from . import exploration, relevance, folders, trash
+from . import exploration, relevance, folders, trash, recommendation, keyword_search
 from .db import get_db
 from .graph import compute_clusters
 from .linkview import number, venue_public, zone_number
@@ -27,19 +27,27 @@ def init():
 class ExploreIn(BaseModel):
     seed_ids: list[int] = Field(min_length=1,max_length=10)
     direction: Literal['references','citing','both'] = 'both'
-    depth: int = Field(default=2,ge=1,le=3)
-    per_direction: int = Field(default=20,ge=1,le=100)
-    max_nodes: int = Field(default=200,ge=10,le=500)
-    online: bool = False
-    max_fetch: int = Field(default=20,ge=1,le=30)
+    depth: int = Field(default=1,ge=1,le=3)
+    per_direction: int|None = Field(default=None,ge=1,le=1000)
+    complete_seed: bool = True
+    focused: bool = True
+    strategy: Literal['balanced','legacy'] = 'legacy'
+    research_query: str = Field(default='',max_length=4000)
+    max_nodes: int = Field(default=300,ge=10,le=50000)
+    online: bool = True
+    max_fetch: int = Field(default=12,ge=1,le=5000)
 
 
 class SearchIn(BaseModel):
     query: str = Field(default='',max_length=4000)
+    # Legacy callers can still pass query as ranking context. The search bar
+    # explicitly uses filter; its behaviour must not depend on selected sort.
+    query_mode: Literal['filter','rank'] = 'rank'
     seed_ids: list[int] = Field(default_factory=list,max_length=10)
     job_id: str = ''
     scope: Literal['all','library','reading','task'] = 'all'
-    sort: Literal['cited','year_desc','year_asc','impact_factor','cas_zone','relevance','network','depth'] = 'cited'
+    sort: Literal['recommended','cited','year_desc','year_asc','impact_factor','cas_zone','relevance','network','depth'] = 'cited'
+    recommendation_group: Literal['all','essential','references','citing','recent','bridge','review'] = 'all'
     year_min: int | None = Field(default=None,ge=1500,le=2200)
     year_max: int | None = Field(default=None,ge=1500,le=2200)
     min_if: float | None = Field(default=None,ge=0,le=1000)
@@ -118,6 +126,16 @@ def job_detail(job_id:str):
     return job
 
 
+class ContinueIn(BaseModel):
+    additional_fetch:int=Field(default=12,ge=1,le=500)
+
+@router.post('/jobs/{job_id}/continue')
+def continue_job(job_id:str,body:ContinueIn):
+    try:return exploration.resume(job_id,body.additional_fetch)
+    except ValueError as e:raise HTTPException(400,str(e))
+    except RuntimeError as e:raise HTTPException(409,str(e))
+
+
 @router.post('/jobs/{job_id}/cancel')
 def cancel(job_id:str):
     if not exploration.get(job_id): raise HTTPException(404,'扩展任务不存在。')
@@ -130,7 +148,7 @@ def search(body:SearchIn):
         raise HTTPException(400,'开始年份应不晚于结束年份。')
     # Relevance keeps the full corpus for seed/query context. Other views only
     # decode the relevant records, especially small reading lists in large libraries.
-    papers = load_papers('all' if body.sort=='relevance' else body.scope)
+    papers = load_papers('all' if body.sort in ('relevance','recommended') else body.scope)
     task = exploration.get(body.job_id) if body.job_id else None
     if body.scope=='task' and not task: raise HTTPException(400,'请先建立或选择扩展任务。')
     paths = {p['id']:p for p in (task or {}).get('results',[])}
@@ -144,16 +162,28 @@ def search(body:SearchIn):
         refs.setdefault(e['from_id'],set()).add(e['to_id'])
         citers.setdefault(e['to_id'],set()).add(e['from_id'])
     seeds = set(body.seed_ids)
+    pool_ids=set(paths) if body.scope=='task' else {p['id'] for p in papers if (body.scope!='library' or p['status']=='library') and (body.scope!='reading' or p['in_reading_list'])}
+    rec,rec_model=recommendation.rank(papers,edges,body.seed_ids,body.query,candidate_ids=pool_ids if allowed is None else pool_ids&allowed) if body.sort=='recommended' or body.recommendation_group!='all' else ({},{})
+    if body.sort=='recommended':model=rec_model
+    rec_facets={k:0 for k in recommendation.LABELS}
+    pool_total=0
+
     output = []
     facets={'total':0,'if_known':0,'cas_known':0,'jcr_known':0,'cas_zones':{str(i):0 for i in range(1,5)},'jcr_zones':{str(i):0 for i in range(1,5)}}
     query = body.query.casefold().strip()
+    matches,expansions=keyword_search.prepare(body.query)
+    filter_query=bool(query) and (body.query_mode=='filter' or body.sort not in ('recommended','relevance'))
+    scope_total=keyword_matches=0
     for p in papers:
         pid = p['id']
         if allowed is not None and pid not in allowed:continue
         if body.scope=='library' and p['status']!='library': continue
         if body.scope=='reading' and not p['in_reading_list']: continue
         if body.scope=='task' and pid not in paths: continue
-        if query and body.sort!='relevance' and query not in ' '.join(str(p.get(k) or '') for k in ('title','title_zh','doi','abstract','abstract_zh')).casefold(): continue
+        scope_total+=1
+        matched=not query or matches(p)
+        if matched:keyword_matches+=1
+        if filter_query and not matched:continue
         v=p['venue_info'] or {}
         year,impact,cas,jcr = p.get('year'),number(v.get('impact_factor')),zone_number(v.get('cas_zone')),zone_number(v.get('jcr_zone'))
         if body.year_min is not None and (year is None or year<body.year_min): continue
@@ -167,6 +197,12 @@ def search(body:SearchIn):
         zone=cas if body.zone_scheme=='cas' else jcr
         if body.cas_missing and zone is not None:continue
         if body.cas_max is not None and (zone is None or zone>body.cas_max): continue
+        pool_total+=1
+        info=rec.get(pid)
+        if info and pid not in seeds:
+            for group in info['roles']:rec_facets[group]+=1
+        if body.recommendation_group!='all' and (pid in seeds or not info or body.recommendation_group not in info['roles']):continue
+        if info:p['recommendation']=info
         sr=sc=0
         network_score=0.
         for sid in seeds-{pid}:
@@ -180,10 +216,10 @@ def search(body:SearchIn):
         output.append(p)
     def key(p):
         v=p['venue_info'] or {}
-        value=(number(v.get('impact_factor')) if body.sort=='impact_factor' else zone_number(v.get('cas_zone')) if body.sort=='cas_zone'
+        value=((p.get('recommendation') or {}).get('rank') if body.sort=='recommended' else number(v.get('impact_factor')) if body.sort=='impact_factor' else zone_number(v.get('cas_zone')) if body.sort=='cas_zone'
                else p.get('year') if body.sort.startswith('year') else p.get('relevance') if body.sort=='relevance'
                else p.get('network_score') if body.sort=='network' else (p.get('discovery') or {}).get('depth') if body.sort=='depth' else p.get('cited_by_count'))
-        return (value is None,(value if body.sort in ('cas_zone','year_asc','depth') else -value) if value is not None else 0,-(p.get('year') or 0),p['id'])
+        return (value is None,(value if body.sort in ('cas_zone','year_asc','depth','recommended') else -value) if value is not None else 0,-(p.get('year') or 0),p['id'])
     output.sort(key=key)
     anchors=[p for p in output if p['is_seed']][:max(0,body.limit-1)] if body.pin_seeds and not body.all_results else []
     anchor_ids={p['id'] for p in anchors}
@@ -193,14 +229,26 @@ def search(body:SearchIn):
     page_count=max(1,(len(remaining)+capacity-1)//capacity)
     visible=output if body.all_results else anchors+remaining[page*capacity:(page+1)*capacity]
     if body.all_results:page=0;page_count=1
-    ids={p['id'] for p in visible}
+    # Group membership and pagination count matches only. Seeds are extra graph
+    # endpoints, even when a year/keyword filter excludes them from the matches.
+    context=[]
+    if body.pin_seeds and body.recommendation_group!='all' and visible:
+        visible_ids={p['id'] for p in visible}
+        context_ids=set(seeds)
+        if body.recommendation_group=='essential':
+            for p in visible:context_ids.update((p.get('recommendation') or {}).get('evidence',{}).get('entry_path_ids',[]))
+        context=[dict(p,is_seed=p['id'] in seeds,is_context=True,context_reason='引用路径') for p in papers if p['id'] in context_ids-visible_ids]
+    ids={p['id'] for p in visible+context}
     ge=[e for e in edges if e['from_id'] in ids and e['to_id'] in ids]
-    clusters=compute_clusters(visible,ge)
-    for p in visible: p['cluster']=clusters.get(p['id'],0)
-    return {'total':len(output),'shown':len(visible),'papers':visible,'model':model,'facets':facets,
+    clusters=compute_clusters(visible+context,ge)
+    for p in visible+context: p['cluster']=clusters.get(p['id'],0)
+    return {'total':len(output),'shown':len(visible),'papers':visible,'context_papers':context,'context_count':len(context),'model':model,'facets':facets,
             'offset':page*body.limit,'limit':max(1,len(output)) if body.all_results else body.limit,'has_more':page+1<page_count,
-            'all_results':body.all_results,
+            'all_results':body.all_results,'candidate_pool_total':pool_total,'recommendation_group':body.recommendation_group,'recommendation_groups':rec_facets,'recommendation_method':rec_model,
             'page_count':page_count,'anchor_count':len(anchors),
+            'search':{'query':body.query.strip(),'mode':'filter' if filter_query or not query else 'rank',
+                      'scope':body.scope,'scope_total':scope_total,'keyword_matches':keyword_matches,
+                      'expansions':expansions if filter_query else [],'uses_network':False},
             'edges':[{'from':e['from_id'],'to':e['to_id'],'source':e['src']} for e in ge],
             'metric_note':'IF 和分区属于期刊指标，不是论文质量分；未知值显示未知并排在最后，不按 0 处理；'
                           '设置 IF/分区/年份阈值时，该指标未知的文献会被排除（分区阈值同样排除未知分区）；'

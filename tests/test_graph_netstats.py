@@ -139,7 +139,8 @@ class NetStatsChecks(unittest.TestCase):
                 'referenced_works': [], 'related_works': []}
         responses = None  # URL 分发见 fake_get
 
-        def fake_get(url, params=None, headers=None, timeout=None):
+        def fake_get(url, params=None, headers=None, timeout=None, proxies=None):
+            self.assertEqual(proxies, netclient.network.DIRECT)
             if url.endswith('/works/doi:10.0000/net-seed') or url.endswith('/works/W9001'):
                 return MockResp(200, work)
             if url.endswith('/works'):
