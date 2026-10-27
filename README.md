@@ -80,4 +80,4 @@ python launcher.py
 
 ## 许可
 
-采用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)。允许在许可范围内使用、修改与再分发；传播时须保留许可证及 [NOTICE](NOTICE) 中的版权与来源声明。**超出公开许可范围的商业用途，须另行取得书面授权。** 具体范围与咨询方式见[许可与商业授权](LICENSING.md)，第三方组件及论文资料另遵循各自许可。
+**本项目源码公开**，采用 [PolyForm Noncommercial License 1.0.0](LICENSE.md)。允许在许可范围内使用、修改与再分发；传播时保留许可证及 [NOTICE](NOTICE) 中的版权与来源声明。**超出公开非商业许可范围的商业使用，必须先联系作者并取得书面商业授权，费用或分成另行约定。** 联系方式与具体说明见[许可与商业授权](LICENSING.md)，第三方组件及论文资料另遵循各自许可。
