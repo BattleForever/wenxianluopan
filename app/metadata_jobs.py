@@ -136,11 +136,11 @@ def apply_biblio(pid,data):
 def local_pdf_abstract(p):
     f=Path(p.get('local_pdf_path') or '')
     if not f.is_file() or f.suffix.lower()!='.pdf' or f.stat().st_size>40*1024*1024:return None
-    import fitz
+    from .pdf_engine import PDFDocument
     try:
-        with fitz.open(f) as d:
-            if d.needs_pass:return None
-            text=sources.plain(' '.join(d[i].get_text(sort=False) for i in range(min(2,len(d)))))
+        with PDFDocument(f) as d:
+            if d.encrypted:return None
+            text=sources.plain(' '.join(d.page_text(i) for i in range(min(2,len(d)))))
         title=norm_title(p.get('title'));doi=(p.get('doi') or '').lower()
         if (title or doi) and not (doi and doi in text.lower() or len(title)>=16 and title in norm_title(text)):return None
         m=re.search(r'\bAbstract\s*[:\-]?\s*(.{100,12000}?)\s*\b(?:1\s*[.\-]?\s*)?Introduction\b',text,re.I)

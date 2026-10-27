@@ -16,8 +16,10 @@ def inventory(doc):
     blocks = []
     sizes = Counter()
     fonts = Counter()
-    for page_no, page in enumerate(doc, 1):
-        for block in page.get_text('dict', sort=False)['blocks']:
+    for page_index in range(len(doc)):
+        page_no = page_index + 1
+        page_blocks, page_height = doc.page_layout(page_index)
+        for block in page_blocks:
             lines = block.get('lines', [])
             records = []
             for line in lines:
@@ -25,11 +27,15 @@ def inventory(doc):
                 if not spans:
                     continue
                 text = normalize(''.join(s['text'] for s in line['spans']))
+                # Some embedded fonts encode Roman section numbers as a
+                # single glyph and omit the following space in extraction.
+                if re.fullmatch(r'[IVXLCDM]+\s*\.\s*[A-Z][A-Z0-9 /&,()\-]{2,}',text):
+                    text=re.sub(r'^([IVXLCDM]+)\s*\.\s*',r'\1. ',text)
                 for s in spans:
                     sizes[round(s['size'], 1)] += len(s['text'])
-                    fonts[s['font'].split('+')[0]] += len(s['text'])
+                    fonts[s['font'].split('+')[-1]] += len(s['text'])
                 records.append((text, spans, line['bbox']))
-            blocks.append((page_no, records, page.rect.height))
+            blocks.append((page_no, records, page_height))
     body_size = sizes.most_common(1)[0][0] if sizes else 10
     body_font = fonts.most_common(1)[0][0] if fonts else ''
     anchors = re.compile(r'^(?:\d+[.\s]+)?(?:abstract|introduction|background|materials and methods|methods|results(?: and discussion)?|discussion|conclusions?)$', re.I)
@@ -41,7 +47,7 @@ def inventory(doc):
     for page_no, lines, height in blocks:
         for text, spans, bbox in lines:
             if anchors.fullmatch(text) or (caption_re.match(text) and spans[0]['size'] < 0.95 * body_size):
-                styles.add(spans[0]['font'].split('+')[0])
+                styles.add(spans[0]['font'].split('+')[-1])
         text = normalize(' '.join(line[0] for line in lines))
         match = caption_re.match(text)
         if match and int(match[1]) <= 60:
@@ -68,7 +74,7 @@ def inventory(doc):
                 stopped = True
             if stopped:
                 continue
-            style = spans[0]['font'].split('+')[0]
+            style = spans[0]['font'].split('+')[-1]
             numbered=bool(numbered_heading.fullmatch(text))
             content=re.sub(r'^(?:[IVXLCDM]+|\d+(?:\.\d+)*|[A-Z])\.\s+','',text)
             if ((style not in styles and not numbered) or not 0.9 * body_size <= spans[0]['size'] <= 1.5 * body_size

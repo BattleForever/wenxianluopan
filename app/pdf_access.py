@@ -2,7 +2,7 @@
 import hashlib,os,tempfile
 from pathlib import Path
 from urllib.parse import urlparse,urljoin
-import fitz
+from .pdf_engine import PDFDocument
 import requests
 from fastapi import APIRouter,HTTPException,Request
 from pydantic import BaseModel,Field
@@ -33,8 +33,8 @@ def paper(pid):
 def validate_pdf(raw):
     if not raw.startswith(b'%PDF-') or len(raw)>MAX_BYTES:raise HTTPException(422,'请选择真实PDF文件，大小不超过40 MB')
     try:
-        with fitz.open(stream=raw,filetype='pdf') as d:
-            if d.needs_pass:raise HTTPException(422,'PDF已加密，请先解除密码')
+        with PDFDocument(raw) as d:
+            if d.encrypted:raise HTTPException(422,'PDF已加密，请先解除密码')
             if not len(d):raise ValueError()
             return len(d)
     except HTTPException:raise
@@ -63,11 +63,11 @@ def public_source(p):
         with f.open('rb') as stream:
             if stream.read(5)!=b'%PDF-':return {'ready':False,'reading_ready':False,'reading_issue':'文件不是有效的PDF，请重新取得原文'}
         if f.stat().st_size>MAX_BYTES:return {'ready':False,'reading_ready':False,'reading_issue':'PDF超过40 MB，请选择较小版本'}
-        with fitz.open(f) as d:
-            if d.needs_pass:return {'ready':False,'reading_ready':False,'reading_issue':'PDF已加密，请先解锁后上传'}
+        with PDFDocument(f) as d:
+            if d.encrypted:return {'ready':False,'reading_ready':False,'reading_issue':'PDF已加密，请先解锁后上传'}
             issue=''
             if len(d)>80:issue='当前支持不超过80页的论文，请选择正文版本'
-            elif sum(len(page.get_text()) for page in d)<300:issue='PDF缺少可提取文本，请先完成OCR后重新上传'
+            elif sum(len(d.page_text(i)) for i in range(len(d)))<300:issue='PDF缺少可提取文本，请先完成OCR后重新上传'
             return {'ready':True,'reading_ready':not issue,'reading_issue':issue,'filename':f.name,'pages':len(d)}
     except Exception:return None
 

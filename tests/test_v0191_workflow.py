@@ -51,12 +51,12 @@ class Workflow(unittest.TestCase):
     self.assertEqual(stage.status_code,200);value=self.client.get('/api/pdf-capture/'+jid).json();self.assertEqual(value['status'],'awaiting_access');self.assertEqual(value['phase'],'access');self.assertEqual(value['issues'][0]['http_status'],403);self.assertIn('elapsed_seconds',value);self.assertNotIn('_token',str(value))
    finally:self.client.post('/api/pdf-capture/'+jid+'/cancel',headers=token)
  def test_pdf_recovery_is_limited_to_uploaded_parent_and_hash(self):
-  import fitz,hashlib
+  import pdf_fixture as pdfgen; import hashlib
   from unittest.mock import MagicMock
   from app import zotero_pdf as z
   from app.zotero_client import ZoteroError
   f=Path(T.name)/'original.pdf'
-  with fitz.open() as doc:doc.new_page().insert_text((30,30),'Fixture original');doc.save(f)
+  with pdfgen.document() as doc:doc.new_page().insert_text((30,30),'Fixture original');doc.save(f)
   with get_db() as c:c.execute('UPDATE papers SET local_pdf_path=? WHERE id=?',(str(f),self.pid))
   cli=MagicMock();cli.get_children.return_value=[];cli.create_items.return_value={'success':{'0':'OLDKEY'}};cli.get_item.side_effect=[{'data':{'itemType':'attachment','parentItem':'PARENT'}},ZoteroError('attachment replaced')]
   digest=hashlib.sha256(f.read_bytes()).hexdigest()

@@ -355,8 +355,9 @@ def oc_citations(doi: str):
 
 def zotero_get(path: str, params=None):
     # 路径全部由本程序构造，item key 段在调用处已按 ^[A-Za-z0-9]+$ 校验
-    url = ZOTERO_BASE + path
-    resp = requests.get(url, params=params, headers={"User-Agent": UA}, timeout=15,**network.proxy_options(url))
+    from .zotero_client import normalize_base
+    url = normalize_base(ZOTERO_BASE) + ('/api' if not path.startswith('/api/') else '') + path
+    resp = requests.get(url, params=params, headers={"User-Agent": UA,'Zotero-API-Version':'3'}, timeout=15,**network.proxy_options(url))
     if resp.status_code != 200:
         raise RuntimeError(f"Zotero 本地 API HTTP {resp.status_code}: {path} "
                            f"（请确认 Zotero 正在运行且设置中允许本地 API）")

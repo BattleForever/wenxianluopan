@@ -2,19 +2,20 @@
 import sys,unittest
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-import fitz
+import pdf_fixture as pdfgen
 from app.pdf_structure import inventory,check_coverage
+from app.pdf_engine import PDFDocument
 
 class IEEELayout(unittest.TestCase):
  def document(self):
-  d=fitz.open();p=d.new_page()
-  p.insert_textbox(fitz.Rect(30,70,560,210),'A regular paragraph with ordinary words. '*24,fontsize=10,fontname='tiro')
+  d=pdfgen.document();p=d.new_page()
+  p.insert_textbox(pdfgen.Rect(30,70,560,210),'A regular paragraph with ordinary words. '*24,fontsize=10,fontname='tiro')
   p.insert_text((30,230),'I. INTRODUCTION',fontsize=10,fontname='tiro')
   p.insert_text((30,260),'II. METHOD',fontsize=10,fontname='tiro')
   p.insert_text((30,290),'III. RESULTS AND DISCUSSION',fontsize=10,fontname='tiro')
-  p.insert_textbox(fitz.Rect(30,330,560,410),'Fig. 1. Overview of the device.\nFig. 2. Two methods. (a) First method. (b) Second method.',fontsize=9,fontname='tiro')
-  p.insert_textbox(fitz.Rect(30,440,560,500),'Fig. 3. Signals. (a) Calculation. (b)(c) Comparison of signals.',fontsize=9,fontname='tiro')
-  return d
+  p.insert_textbox(pdfgen.Rect(30,330,560,410),'Fig. 1. Overview of the device.\nFig. 2. Two methods. (a) First method. (b) Second method.',fontsize=9,fontname='tiro')
+  p.insert_textbox(pdfgen.Rect(30,440,560,500),'Fig. 3. Signals. (a) Calculation. (b)(c) Comparison of signals.',fontsize=9,fontname='tiro')
+  return PDFDocument(d.tobytes())
  def test_roman_headings_in_body_font_are_recognized(self):
   with self.document() as d:r=inventory(d)
   self.assertEqual([s['heading'] for s in r['sections']],['I. INTRODUCTION','II. METHOD','III. RESULTS AND DISCUSSION'])
@@ -31,5 +32,18 @@ class IEEELayout(unittest.TestCase):
   with self.document() as d:expected=inventory(d)
   data={'sections':[{'heading':s['heading']} for s in expected['sections']], 'figures':[]}
   with self.assertRaisesRegex(ValueError,'figure coverage'):check_coverage(data,expected)
+ def test_roman_number_without_extracted_space_is_recognized(self):
+  d=pdfgen.document();p=d.new_page()
+  p.insert_textbox(pdfgen.Rect(30,70,560,210),'A regular paragraph with ordinary words. '*24,fontsize=10,fontname='tiro')
+  p.insert_text((30,230),'II.METHOD',fontsize=10,fontname='tiro')
+  with PDFDocument(d.tobytes()) as parsed:r=inventory(parsed)
+  self.assertEqual([s['heading'] for s in r['sections']],['II. METHOD'])
+ def test_caption_split_across_text_operators_is_joined(self):
+  d=pdfgen.document();p=d.new_page()
+  p.insert_text((30,100),'Figure ',fontsize=10,fontname='tiro')
+  p.insert_text((58.05,100),'2. Method. (a) Input. (b) Output.',fontsize=10,fontname='tiro')
+  with PDFDocument(d.tobytes()) as parsed:r=inventory(parsed)
+  self.assertEqual([f['number'] for f in r['figures']],[2])
+  self.assertEqual(r['figures'][0]['panels'],['a','b'])
 
 if __name__=='__main__':unittest.main()

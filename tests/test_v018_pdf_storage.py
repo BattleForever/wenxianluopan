@@ -11,11 +11,11 @@ from app import pdf_storage as storage,pdf_access as pdf,browser_capture as capt
 from app.browser_capture_worker import matches_pdf,remote_url
 from app.db import get_db
 from app.store import upsert_paper
-import fitz
+import pdf_fixture as pdfgen
 
 def document(title,doi):
- with fitz.open() as d:
-  page=d.new_page();page.insert_textbox(fitz.Rect(30,30,540,700),title+'\n'+doi+'\nAbstract\nA controlled experiment measures flow through two paths. '*3,fontsize=10)
+ with pdfgen.document() as d:
+  page=d.new_page();page.insert_textbox(pdfgen.Rect(30,30,540,700),title+'\n'+doi+'\nAbstract\nA controlled experiment measures flow through two paths. '*3,fontsize=10)
   return d.tobytes()
 class Storage(unittest.TestCase):
  def setUp(self):

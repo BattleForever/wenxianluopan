@@ -17,10 +17,10 @@ class Completion(unittest.TestCase):
   with get_db() as c:self.pid,_=upsert_paper(c,{'title':self.id(),'doi':'10.9999/'+self.id().split('.')[-1],'abstract':TEXT,'authors':[]},'test','library')
  def opts(self,**kw):return {'allow_network':True,'allow_ai':False,'include_metrics':False,**kw}
  def test_pdf_abstract_excludes_index_terms_and_author_contact(self):
-  import fitz
+  import pdf_fixture as pdfgen
   path=Path(T.name)/'synthetic_abstract.pdf'
   text='Abstract: '+('A controlled flow experiment measures two travel times. '*5)+'\nIndex Terms: synthetic, flow.\nAuthor Contact: not part of abstract.\nI. INTRODUCTION\nRegular body text.'
-  doc=fitz.open();page=doc.new_page();page.insert_textbox(fitz.Rect(30,30,550,700),text,fontsize=10);doc.save(path);doc.close()
+  doc=pdfgen.document();page=doc.new_page();page.insert_textbox(pdfgen.Rect(30,30,550,700),text,fontsize=10);doc.save(path);doc.close()
   result=m.local_pdf_abstract({'local_pdf_path':str(path)})
   self.assertIsNotNone(result);self.assertNotIn('Index Terms',result['abstract']);self.assertNotIn('Author Contact',result['abstract'])
  def test_existing_content_not_overwritten_and_empty_authors_filled(self):

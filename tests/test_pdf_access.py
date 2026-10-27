@@ -2,7 +2,7 @@
 import os,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
-import fitz
+import pdf_fixture as pdfgen
 T=tempfile.TemporaryDirectory();os.environ['PAPERNET_DATA_DIR']=T.name
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from fastapi import HTTPException
@@ -13,7 +13,7 @@ from app.db import get_db,set_setting
 from app.store import upsert_paper
 
 def pdf():
- with fitz.open() as d:
+ with pdfgen.document() as d:
   d.new_page().insert_text((60,60),'Readable test PDF');return d.tobytes()
 
 class PDF(unittest.TestCase):

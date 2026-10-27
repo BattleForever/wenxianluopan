@@ -46,11 +46,11 @@
 #detail-dialog .detail-tabs button{flex:none}
 @media(max-width:480px){#detail-dialog .dialog-heading{gap:6px}#detail-dialog .paper-heading h2{font-size:17px}#detail-dialog .detail-tabs{gap:12px}#detail-dialog .detail-tabs button{font-size:11px}.paper-records dl{grid-template-columns:78px minmax(0,1fr)}}
 
-#detail-dialog .detail-actions{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}#detail-dialog .detail-actions>button{width:100%;min-width:0;padding:8px 5px;text-align:center;white-space:nowrap;font-size:11px}@media(max-width:520px){#detail-dialog .detail-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+#detail-dialog .detail-actions{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:8px}#detail-dialog .detail-actions>button{grid-column:span 3;width:100%;min-width:0;padding:8px 5px;text-align:center;white-space:nowrap;font-size:11px}@media(max-width:520px){#detail-dialog .detail-actions>button{grid-column:span 6}}
 
 /* Long collection paths stay inside stable, keyboard-accessible controls. */
 #detail-dialog .detail-actions>button{box-sizing:border-box;overflow:hidden;text-overflow:ellipsis;height:36px;line-height:18px;min-height:36px;max-width:100%;border-width:1px}
 #detail-dialog .detail-actions>button:focus-visible{outline:2px solid #83c8e1;outline-offset:2px}
-#detail-dialog #detail-organize,#detail-dialog #detail-zflush{grid-column:span 2;text-align:left;padding-inline:10px;color:#b4dce8}
+#detail-dialog #detail-organize,#detail-dialog #detail-zflush,#detail-dialog #detail-save{grid-column:span 4;text-align:left;padding-inline:8px;color:#b4dce8}
 
-#detail-dialog #detail-ai{order:0}#detail-dialog #detail-pdfguide{order:1}#detail-dialog #detail-enrich{order:2}#detail-dialog #detail-seed{order:3}#detail-dialog #detail-organize{order:4}#detail-dialog #detail-zflush{order:5}#detail-dialog #detail-save{order:6;grid-column:1/-1;text-align:left;padding-inline:10px;color:#b4dce8}
+#detail-dialog #detail-ai{order:0}#detail-dialog #detail-pdfguide{order:1}#detail-dialog #detail-enrich{order:2}#detail-dialog #detail-seed{order:3}#detail-dialog #detail-organize{order:4}#detail-dialog #detail-zflush{order:5}#detail-dialog #detail-save{order:6}

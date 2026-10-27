@@ -12,7 +12,7 @@ from app.startup import APP_ID, data_identity, matches, read_health, wait_ready
 from app.background import spawn
 
 ROOT = Path(__file__).resolve().parent
-IMPORT_CHECK = 'import fastapi,uvicorn,requests,networkx,bibtexparser,fitz,sklearn'
+IMPORT_CHECK = 'import fastapi,uvicorn,requests,networkx,bibtexparser,pypdf,pypdfium2,PIL,fontTools,sklearn'
 
 
 def resolve_workspace(value):

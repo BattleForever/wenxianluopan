@@ -17,7 +17,7 @@ from unittest.mock import patch
 TMP=tempfile.TemporaryDirectory()
 os.environ['PAPERNET_DATA_DIR']=TMP.name
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-import fitz
+import pdf_fixture as pdfgen
 from app.db import init_db,get_db,set_setting
 from app.store import upsert_paper
 from app import pdf_guide as pg
@@ -46,7 +46,7 @@ class Workflow(unittest.TestCase):
                        'figures':[{'number':1,'page':1,'panels':[]}],'note':'测试版面清单'}
 
     def write_pdf(self,text):
-        doc=fitz.open();p=doc.new_page();p.insert_textbox(fitz.Rect(30,30,500,700),text);doc.save(self.f);doc.close()
+        doc=pdfgen.document();p=doc.new_page();p.insert_textbox(pdfgen.Rect(30,30,500,700),text);doc.save(self.f);doc.close()
 
     def ready(self):
         pg._snapshot(self.pid,self.f,self.pages,self.digest)
@@ -179,11 +179,14 @@ class Workflow(unittest.TestCase):
             self.assertIn('模型配置已变化',pg.get_guide(self.pid)['stale_reasons'])
 
     def test_layout_detects_real_caption_not_inline_reference(self):
-        doc=fitz.open();p=doc.new_page()
+        doc=pdfgen.document();p=doc.new_page()
         p.insert_text((40,80),'Introduction',fontname='hebo',fontsize=12)
-        p.insert_textbox(fitz.Rect(40,100,500,300),TEXT*6,fontname='helv',fontsize=11)
+        p.insert_textbox(pdfgen.Rect(40,100,500,300),TEXT*6,fontname='helv',fontsize=11)
         p.insert_text((40,350),'Fig. 1 Device layout. a Fabrication. b Measurement.',fontname='hebo',fontsize=9)
-        result=inventory(doc);doc.close()
+
+        from app.pdf_engine import PDFDocument
+        with PDFDocument(doc.tobytes()) as parsed:result=inventory(parsed)
+        doc.close()
         self.assertEqual([f['number'] for f in result['figures']],[1])
         self.assertEqual(result['figures'][0]['panels'],['a','b'])
         self.assertNotIn(TEXT[:30],[s['heading'] for s in result['sections']])

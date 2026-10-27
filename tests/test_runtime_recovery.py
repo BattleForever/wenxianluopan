@@ -2,7 +2,7 @@
 import json,os,sys,tempfile,threading,unittest
 from pathlib import Path
 from unittest.mock import patch
-import fitz
+import pdf_fixture as pdfgen
 T=tempfile.TemporaryDirectory();os.environ['PAPERNET_DATA_DIR']=T.name
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app.main import app
@@ -32,11 +32,11 @@ class Recovery(unittest.TestCase):
   self.assertEqual(e.exception.status_code,409);start.assert_not_called()
  def test_pdf_source_rejects_trashed_paper(self):
   trash.put(trash.Put(ids=[self.pid],scope='library'))
-  with fitz.open() as d:d.new_page();raw=d.tobytes()
+  with pdfgen.document() as d:d.new_page();raw=d.tobytes()
   with self.assertRaises(HTTPException) as e:pdf.save_pdf(self.pid,raw)
   self.assertEqual(e.exception.status_code,409)
  def test_scanned_source_explains_ocr_before_generation(self):
-  with fitz.open() as d:d.new_page();raw=d.tobytes()
+  with pdfgen.document() as d:d.new_page();raw=d.tobytes()
   pdf.save_pdf(self.pid,raw);status=pdf.status(self.pid)
   self.assertTrue(status['ready']);self.assertFalse(status['reading_ready']);self.assertIn('OCR',status['reading_issue'])
  def test_find_does_not_claim_corrupt_attachment_is_ready(self):

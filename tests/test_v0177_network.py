@@ -84,11 +84,11 @@ class SourceRecovery(unittest.TestCase):
    self.assertIn('abstract',result['filled']);self.assertEqual(m.paper(pid)['abstract'],text.strip())
    with get_db() as c:self.assertEqual(c.execute("SELECT source FROM metadata_field_sources WHERE paper_id=? AND field='abstract'",(pid,)).fetchone()[0],'出版商公开摘要')
  def test_missing_abstract_recovers_from_acquired_pdf_and_rejects_other_paper(self):
-  import fitz
+  import pdf_fixture as pdfgen
   from app import pdf_resolver
   title='A controlled original for automatic abstract recovery';doi='10.5555/pdf-recovery'
   text='A controlled flow experiment compares two measurement channels and reports stable accuracy. '*4
-  file=Path(T.name)/'recovery.pdf';doc=fitz.open();page=doc.new_page();page.insert_textbox(fitz.Rect(30,30,550,750),title+'\n'+doi+'\nAbstract: '+text+'\n1 Introduction\nBody text.',fontsize=11);doc.save(file);doc.close()
+  file=Path(T.name)/'recovery.pdf';doc=pdfgen.document();page=doc.new_page();page.insert_textbox(pdfgen.Rect(30,30,550,750),title+'\n'+doi+'\nAbstract: '+text+'\n1 Introduction\nBody text.',fontsize=11);doc.save(file);doc.close()
   with get_db() as c:pid=upsert_paper(c,{'title':title,'doi':doi,'year':2025,'authors':['Author'],'venue':'Example'},'fixture','library')[0]
   def acquire(pid):
    with get_db() as c:c.execute('UPDATE papers SET local_pdf_path=? WHERE id=?',(str(file),pid))

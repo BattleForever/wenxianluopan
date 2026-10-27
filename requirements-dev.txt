@@ -1,0 +1,3 @@
+-r requirements.txt
+reportlab>=4.4,<5
+httpx>=0.27,<1

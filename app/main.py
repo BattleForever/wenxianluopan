@@ -101,6 +101,7 @@ class SettingsIn(BaseModel):
 
 
 def _err(e: Exception):
+    if isinstance(e,ValueError):return JSONResponse(status_code=422,content={'error':str(e)})
     if isinstance(e, OfflineError):
         return JSONResponse(status_code=503, content={
             "error": "当前为离线模式且本地无缓存，请联网后重试或在设置中关闭离线模式"})
@@ -228,7 +229,7 @@ def api_zotero_collections():
 def api_zotero_sync(body: ZoteroSyncIn | None = None):
     try:
         ckey = (body.collection_key if body else None) or None
-        return importer.zotero_sync(enrich=is_online(), collection_key=ckey)
+        return importer.zotero_sync(enrich=False, collection_key=ckey)
     except Exception as e:  # noqa: BLE001
         return _err(e)
 
@@ -876,6 +877,10 @@ from . import metric_catalog
 app.include_router(metric_catalog.router)
 from . import connection_status
 app.include_router(connection_status.router)
+
+from . import import_jobs
+import_jobs.init()
+app.include_router(import_jobs.router)
 from . import source_profiles
 app.include_router(source_profiles.router)
 from . import metadata_jobs

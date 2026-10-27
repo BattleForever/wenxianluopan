@@ -2,7 +2,7 @@
 import copy,json,os,sys,tempfile,unittest
 from pathlib import Path
 from unittest.mock import patch
-import fitz
+import pdf_fixture as pdfgen
 TMP=tempfile.TemporaryDirectory();os.environ['PAPERNET_DATA_DIR']=TMP.name
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
 from app.db import init_db,get_db,set_setting
@@ -23,18 +23,18 @@ class TestPDFGuide(unittest.TestCase):
   d=copy.deepcopy(DATA);d['sections'][0]['evidence']['page']=2
   with self.assertRaises(ValueError):pg.validate(d,[TEXT])
  def test_unreadable_pdf_and_no_ocr(self):
-  f=Path(TMP.name)/'empty.pdf';doc=fitz.open();doc.new_page();doc.save(f);doc.close()
+  f=Path(TMP.name)/'empty.pdf';doc=pdfgen.document();doc.new_page();doc.save(f);doc.close()
   with get_db() as c:pid,_=upsert_paper(c,{'title':'Scanned example','local_pdf_path':str(f)},source='test',status='library')
   with self.assertRaises(pg.HTTPException) as e:pg._source(pid)
   self.assertEqual(e.exception.status_code,422)
  def test_offline_post_never_calls_model(self):
-  f=Path(TMP.name)/'text.pdf';d=fitz.open();p=d.new_page();p.insert_textbox(fitz.Rect(30,30,500,700),TEXT*8);d.save(f);d.close()
+  f=Path(TMP.name)/'text.pdf';d=pdfgen.document();p=d.new_page();p.insert_textbox(pdfgen.Rect(30,30,500,700),TEXT*8);d.save(f);d.close()
   with get_db() as c:pid,_=upsert_paper(c,{'title':'Readable example','local_pdf_path':str(f)},source='test',status='library')
   set_setting('offline_mode','1')
   with patch.object(pg.ai_brief,'call_llm',side_effect=AssertionError('network')):
    self.assertEqual(pg.generate(pid)['error']['code'],'offline_mode')
  def test_changed_pdf_marks_cache_stale(self):
-  f=Path(TMP.name)/'stale.pdf';d=fitz.open();p=d.new_page();p.insert_textbox(fitz.Rect(30,30,500,700),TEXT*8);d.save(f);d.close()
+  f=Path(TMP.name)/'stale.pdf';d=pdfgen.document();p=d.new_page();p.insert_textbox(pdfgen.Rect(30,30,500,700),TEXT*8);d.save(f);d.close()
   with get_db() as c:pid,_=upsert_paper(c,{'title':'Cache source','local_pdf_path':str(f)},source='test',status='library')
   p,_,pages,h=pg._source(pid);pg._save(pid,p,pages,h,pg.validate(DATA,pages),'test-model')
   self.assertFalse(pg.get_guide(pid)['stale'])

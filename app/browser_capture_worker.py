@@ -4,11 +4,12 @@ from pathlib import Path
 from urllib.parse import urlparse,urljoin
 
 def matches_pdf(raw,title,doi):
-    import fitz,re
+    import re
+    from .pdf_engine import PDFDocument
     try:
-        with fitz.open(stream=raw,filetype='pdf') as doc:
-            if doc.needs_pass:return False
-            first=doc[0].get_text() if len(doc) else '';text=' '.join(doc[i].get_text() for i in range(min(2,len(doc))))
+        with PDFDocument(raw) as doc:
+            if doc.encrypted:return False
+            first=doc.page_text(0) if len(doc) else '';text=' '.join(doc.page_text(i) for i in range(min(2,len(doc))))
         norm=lambda s:re.sub(r'[^a-z0-9\u4e00-\u9fff]+','',(s or '').lower())
         return bool(doi and doi.lower() in first.lower() or len(norm(title))>=16 and norm(title) in norm(text))
     except Exception:return False

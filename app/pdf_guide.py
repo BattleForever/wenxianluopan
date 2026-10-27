@@ -19,7 +19,7 @@ import zipfile
 from datetime import datetime, timezone
 from contextlib import closing
 from pathlib import Path
-import fitz
+from .pdf_engine import PDFDocument
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from . import ai_brief
@@ -29,7 +29,7 @@ from .pdf_structure import inventory, check_coverage
 from .zotero_client import normalize_doi
 
 router=APIRouter(prefix='/api/papers')
-VERSION='pdf_guide_v3_ieee_layout'
+VERSION='pdf_guide_v4_portable_pdf'
 MAX_JOBS=2
 _active=set()
 _mutex=threading.Lock()
@@ -149,14 +149,14 @@ def _source(pid):
         raw=f.read_bytes()
         if len(raw)>40*1024*1024:raise HTTPException(413,'PDF 超过 40 MB，请使用较小版本。')
         if not raw.startswith(b'%PDF-'):raise ValueError()
-        with fitz.open(stream=raw,filetype='pdf') as d:
-            if d.needs_pass:raise HTTPException(422,'PDF 已加密，无法提取。')
+        with PDFDocument(raw) as d:
+            if d.encrypted:raise HTTPException(422,'PDF 已加密，无法提取。')
             if len(d)>80:raise HTTPException(422,'当前支持不超过 80 页的论文，请先选择正文版本。')
             pages=[]
-            for page in d:
+            for page_index in range(len(d)):
                 # Geometric y/x sorting interleaves two-column articles line by
                 # line. Preserve the PDF's text block reading order instead.
-                text=unicodedata.normalize('NFKC',page.get_text(sort=False)).replace('\x00','')
+                text=unicodedata.normalize('NFKC',d.page_text(page_index)).replace('\x00','')
                 text=re.sub(r'(\w)[-\u00ad]\n(\w)',r'\1\2',text)
                 pages.append(re.sub(r'\s+',' ',text).strip())
             if sum(map(len,pages))<300:raise HTTPException(422,'PDF 缺少可提取文本，暂不支持扫描件 OCR。')
@@ -233,7 +233,7 @@ def _snapshot(pid,f,pages,digest):
             Path(name).unlink(missing_ok=True)
     with get_db() as c:
         c.execute('INSERT OR IGNORE INTO pdf_guide_source_texts VALUES(?,?,?,?)',(pid,digest,VERSION,json.dumps(pages,ensure_ascii=False)))
-    with fitz.open(stream=raw,filetype='pdf') as doc:expected=inventory(doc)
+    with PDFDocument(raw) as doc:expected=inventory(doc)
     if len(expected['sections'])>60 or len(expected['figures'])>40:
         raise HTTPException(422,'识别出的章节或主图数量超过当前导读上限，请选择正文版本；未截断后冒充完整导读。')
     return expected
@@ -340,10 +340,8 @@ def _stored_source(pid,digest,guide_id=None):
 
 
 def _page_png(f,page):
-    with fitz.open(f) as doc:
-        p=doc[page-1]
-        scale=min(1.4,1800/max(p.rect.width,p.rect.height))
-        return p.get_pixmap(matrix=fitz.Matrix(scale,scale),alpha=False).tobytes('png')
+    with PDFDocument(f) as doc:
+        return doc.render_png(page-1)
 
 
 @router.get('/{pid}/pdf-guide/export')

@@ -5,6 +5,7 @@
 """
 
 import html
+import hashlib
 import json
 import logging
 import re
@@ -28,34 +29,60 @@ log = logging.getLogger("papernet.importer")
 DOI_RE = re.compile(r"\b(10\.\d{4,9}/[-._;()/:A-Za-z0-9]+)")
 
 
+def _remember(stats,pid):
+    ids=stats.setdefault('paper_ids',[])
+    if pid not in ids:ids.append(pid)
+
+
+def extract_dois(text):
+    # Separate records by whitespace or a delimiter before the next DOI, never
+    # split semicolons within a DOI suffix (older journal identifiers use them).
+    value=re.sub(r'[,;，；](?=\s*(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?10\.)','\n',text or '',flags=re.I)
+    out=[]
+    for match in DOI_RE.finditer(value):
+        d=norm_doi(match[1].rstrip('.,;'))
+        while d.endswith(')') and d.count(')')>d.count('('):d=d[:-1]
+        if d not in out:out.append(d)
+    return out
+
+
 # ------------------------------------------------------------------ DOI
 
 def import_dois(text: str):
-    dois = []
-    for tok in re.split(r"[\s,;]+", text or ""):
-        d = norm_doi(tok)
-        if d and re.match(r"^10\.\d{4,9}/", d):
-            dois.append(d)
-    dois = list(dict.fromkeys(dois))
+    dois = extract_dois(text)
+    if not dois:raise ValueError('未识别到 DOI。请粘贴 10. 开头的 DOI 或 doi.org 链接，每行一条。')
     stats = {"total": len(dois), "added": 0, "updated": 0, "not_found": [], "errors": []}
 
-    pairs = []  # (doi, work|None)，联网阶段
+    pairs = []
     for doi in dois:
+        # Reuse an existing local record even when the network is unavailable.
+        with get_db() as conn:
+            existing=find_existing(conn,doi=doi)
+            if existing:
+                conn.execute("UPDATE papers SET status='library' WHERE id=?",(existing['id'],))
+                stats['updated']+=1
+                _remember(stats,existing['id'])
+                continue
+        p=None
         try:
-            pairs.append((doi, oa_work_by_doi(doi)))
-        except OfflineError:
-            raise
-        except Exception as e:  # noqa: BLE001
-            stats["errors"].append(f"{doi}: {e}")
+            work=oa_work_by_doi(doi)
+            if work:p=oa_work_to_paper(work)
+        except Exception:pass
+        if not p:
+            try:
+                from .metadata_sources import crossref
+                p=crossref(doi)
+            except Exception:pass
+        if p and norm_doi(p.get('doi'))==doi:pairs.append((doi,p))
+        else:stats['not_found'].append(doi);stats['errors'].append(f'{doi}：未取得可核对的书目，请检查网络，或改用 BibTeX、RIS、PDF、Zotero 导入。')
 
     with get_db() as conn:  # 写回阶段
-        for doi, w in pairs:
-            if not w:
-                stats["not_found"].append(doi)
-                continue
-            _, created = upsert_paper(conn, oa_work_to_paper(w), source="doi",
-                                      status="library")
-            stats["added" if created else "updated"] += 1
+        for doi,p in pairs:
+            try:
+                pid,created=upsert_paper(conn,p,source='doi',status='library')
+                stats['added' if created else 'updated']+=1
+                _remember(stats,pid)
+            except ValueError:stats['errors'].append(f'{doi}：与已有文献标识冲突，未合并。')
     return stats
 
 
@@ -91,14 +118,17 @@ def _entry_to_paper(e: dict) -> dict:
 
 
 def import_bibtex(text: str):
-    db = bibtexparser.loads(text)
+    db = bibtexparser.loads((text or '').lstrip('\ufeff'))
+    if not db.entries:raise ValueError('未识别到 BibTeX 条目。请选择 .bib 文件，或粘贴以 @article、@inproceedings 等开头的完整内容。')
     stats = {"total": len(db.entries), "added": 0, "updated": 0, "errors": []}
     with get_db() as conn:
         for e in db.entries:
             try:
-                _, created = upsert_paper(conn, _entry_to_paper(e), source="bibtex",
+                if not e.get('title') and not e.get('doi'):raise ValueError('条目缺少题名和 DOI，未导入')
+                pid, created = upsert_paper(conn, _entry_to_paper(e), source="bibtex",
                                           status="library")
                 stats["added" if created else "updated"] += 1
+                _remember(stats,pid)
             except Exception as ex:  # noqa: BLE001
                 stats["errors"].append(str(ex))
     return stats
@@ -107,19 +137,25 @@ def import_bibtex(text: str):
 def _parse_ris(text: str):
     entries = []
     cur = None
-    for line in (text or "").splitlines():
+    last_tag=None
+    for line in (text or "").lstrip('\ufeff').splitlines():
         m = re.match(r"^([A-Z][A-Z0-9])\s{2}-\s?(.*)$", line)
         if not m:
+            if cur is not None and last_tag and line.strip():cur[last_tag][-1]+=' '+line.strip()
             continue
         tag, val = m.group(1), m.group(2).strip()
         if tag == "TY":
+            if cur is not None:entries.append(cur)
             cur = defaultdict(list)
+            last_tag=None
         elif tag == "ER":
             if cur is not None:
                 entries.append(cur)
             cur = None
         elif cur is not None:
             cur[tag].append(val)
+            last_tag=tag
+    if cur is not None:entries.append(cur)
     papers = []
     for e in entries:
         title = (e.get("TI") or e.get("T1") or [""])[0]
@@ -139,12 +175,15 @@ def _parse_ris(text: str):
 
 def import_ris(text: str):
     papers = _parse_ris(text)
+    if not papers:raise ValueError('未识别到 RIS 条目。请选择 .ris 文件，或粘贴包含 TY  - 与 TI  - 的内容。')
     stats = {"total": len(papers), "added": 0, "updated": 0, "errors": []}
     with get_db() as conn:
         for p in papers:
             try:
-                _, created = upsert_paper(conn, p, source="ris", status="library")
+                if not p.get('title') and not p.get('doi'):raise ValueError('条目缺少题名和 DOI，未导入')
+                pid, created = upsert_paper(conn, p, source="ris", status="library")
                 stats["added" if created else "updated"] += 1
+                _remember(stats,pid)
             except Exception as ex:  # noqa: BLE001
                 stats["errors"].append(str(ex))
     return stats
@@ -153,14 +192,9 @@ def import_ris(text: str):
 # ------------------------------------------------------------------ PDF 文件夹
 
 def _pdf_text_head(path: Path, pages=3) -> str:
-    import pymupdf as fitz
-    with fitz.open(path) as doc:
-        txt = ""
-        for i, page in enumerate(doc):
-            if i >= pages:
-                break
-            txt += page.get_text() or ""
-    return txt
+    from .pdf_engine import PDFDocument
+    with PDFDocument(path) as doc:
+        return '\n'.join(doc.page_text(i) for i in range(min(pages,len(doc))))
 
 
 def _match_paper(doi=None, title=None):
@@ -189,36 +223,44 @@ def _match_paper(doi=None, title=None):
 
 
 def scan_pdf_folder(folder: str):
-    root = Path(folder)
+    root = Path(folder.strip().strip('"')).expanduser()
     if not root.is_dir():
-        return {"error": f"目录不存在: {folder}"}
-    pdfs = sorted(root.rglob("*.pdf"))
+        raise ValueError('文件夹不存在。请使用“选择文件夹”，或填写这台电脑上的完整路径。')
+    pdfs = sorted(p for p in root.rglob('*') if p.is_file() and p.suffix.lower()=='.pdf')
+    if not pdfs:raise ValueError('这个文件夹及其子文件夹中没有 PDF 文件。')
+    return import_pdf_files(pdfs)
+
+
+def import_pdf_files(pdfs,title_override=None):
+    with get_db() as conn:conn.execute('CREATE TABLE IF NOT EXISTS import_pdf_fingerprints(sha256 TEXT PRIMARY KEY,paper_id INTEGER NOT NULL REFERENCES papers(id) ON DELETE CASCADE)')
     stats = {"total": len(pdfs), "matched": 0, "title_only": 0, "failed": 0,
              "updated": 0, "errors": []}
 
     collected = []  # (paper_dict, kind)，联网阶段
     for pdf in pdfs:
         try:
+            digest=hashlib.sha256(pdf.read_bytes()).hexdigest()
             text = _pdf_text_head(pdf)
             m = DOI_RE.search(text)
             doi = norm_doi(m.group(1).rstrip(".,;)")) if m else None
-            p = _match_paper(doi=doi) if doi else None
+            try:p = _match_paper(doi=doi) if doi else None
+            except Exception:p=None
             if p:
                 p["local_pdf_path"] = str(pdf)
-                collected.append((p, "matched"))
+                collected.append((p, "matched",digest))
                 continue
             doc_title = ""
             try:
-                import pymupdf as fitz
-                with fitz.open(pdf) as doc:
+                from .pdf_engine import PDFDocument
+                with PDFDocument(pdf) as doc:
                     doc_title = (doc.metadata or {}).get("title") or ""
             except Exception:  # noqa: BLE001
                 pass
-            meta_title = (pdf.stem or "").replace("_", " ").strip()
+            meta_title = (title_override or pdf.stem or "").replace("_", " ").strip()
             best_title = doc_title.strip() if len(doc_title.strip()) > 15 else meta_title
-            if best_title and len(best_title) > 15:
-                collected.append(({"title": best_title, "local_pdf_path": str(pdf)},
-                                  "title_only"))
+            if best_title:
+                collected.append(({"title": best_title,"doi":doi, "local_pdf_path": str(pdf)},
+                                  "title_only",digest))
             else:
                 stats["failed"] += 1
         except OfflineError:
@@ -228,14 +270,19 @@ def scan_pdf_folder(folder: str):
             stats["errors"].append(f"{pdf.name}: {e}")
 
     with get_db() as conn:  # 写回阶段
-        for p, kind in collected:
-            _, created = upsert_paper(conn, p, source="pdf", status="library")
+        for p, kind,digest in collected:
+            existing=conn.execute('SELECT p.id FROM papers p JOIN import_pdf_fingerprints f ON p.id=f.paper_id WHERE f.sha256=?',(digest,)).fetchone()
+            if existing:
+                pid=existing[0];created=False;conn.execute("UPDATE papers SET status='library' WHERE id=?",(pid,))
+            else:pid,created=upsert_paper(conn,p,source='pdf',status='library')
+            conn.execute('INSERT OR IGNORE INTO import_pdf_fingerprints VALUES(?,?)',(digest,pid))
+            _remember(stats,pid)
             if kind == "matched":
                 stats["matched"] += 1 if created else 0
                 if not created:
                     stats["updated"] += 1
             else:
-                stats["title_only"] += 1
+                stats['title_only' if created else 'updated'] += 1
     return stats
 
 
@@ -404,6 +451,7 @@ def import_standard(papers_text: str = "", citations_text: str = "",
         resolution = []  # 与 parsed 一一对应：是否成功入库、唯一内部 ID、可否建边
         for p, refs, unknown in parsed:
             try:
+                if not p.get('title') and not p.get('doi'):raise ValueError('条目缺少题名和 DOI，未导入')
                 status = p.pop("_status", "library") or "library"
                 collections = p.pop("_collections", [])
                 vm = p.pop("_venue_meta", None)
@@ -438,6 +486,7 @@ def import_standard(papers_text: str = "", citations_text: str = "",
                         "paper_id) VALUES(?, ?)", (cid, pid),
                     )
                 stats["added" if created else "updated"] += 1
+                _remember(stats,pid)
                 if p.get("doi"):
                     doi_map[norm_doi(p["doi"])] = pid
                 # 题名缓存已移除（02A-R1）：同批同名/跨批同名一律走数据库
@@ -529,9 +578,10 @@ def import_standard(papers_text: str = "", citations_text: str = "",
 
 def _zotero_item_to_paper(item: dict):
     data = item.get("data", {})
-    if data.get("itemType") in ("attachment", "note", "annotation"):
+    if data.get('deleted') or data.get("itemType") in ("attachment", "note", "annotation"):
         return None
-    doi = norm_doi(data.get("doi"))
+    if not data.get('title') and not data.get('DOI'):return None
+    doi = norm_doi(data.get("DOI") or data.get('doi'))
     date = str(data.get("date") or "")
     m = re.search(r"\d{4}", date)
     authors = []
@@ -542,7 +592,7 @@ def _zotero_item_to_paper(item: dict):
                 name = c.get("name", "")
             if name:
                 authors.append(name)
-    key = data.get("key", "")
+    key = data.get("key") or item.get('key','')
     if key and not re.match(r"^[A-Za-z0-9]+$", key):
         key = ""
     return {
@@ -572,6 +622,11 @@ def _zotero_pdf_path(item_key: str, zotero_dir: Path):
         if "pdf" not in (d.get("contentType") or "") and not str(
                 d.get("filename", "")).lower().endswith(".pdf"):
             continue
+        try:
+            from .zotero_client import ZoteroClient
+            file=ZoteroClient().attachment_file(ch.get('key') or d.get('key'))
+            if file.is_file() and file.suffix.lower()=='.pdf':return str(file)
+        except Exception:pass
         if d.get("linkMode") == "imported_file" and d.get("filename"):
             p = zotero_dir / "storage" / ch.get("key", "") / d["filename"]
             if p.is_file():
@@ -585,31 +640,21 @@ def _zotero_pdf_path(item_key: str, zotero_dir: Path):
 
 def _collection_and_descendants(collection_key: str):
     """返回分类自身与其全部后代子分类的 key 列表。"""
+    from .zotero_link import collection_rows
+    from .zotero_client import ZoteroClient
+    rows=collection_rows(ZoteroClient())
+    if not any(r['key']==collection_key for r in rows):raise ValueError('集合已不存在，请刷新')
     out = [collection_key]
-    queue = [collection_key]
-    while queue:
-        cur = queue.pop(0)
-        try:
-            resp = zotero_get(f"/users/0/collections/{cur}/collections")
-            children = resp.json()
-        except Exception:  # noqa: BLE001
-            continue
-        for c in children:
-            k = c.get("key", "")
-            if re.match(r"^[A-Za-z0-9]+$", k) and k not in out:
-                out.append(k)
-                queue.append(k)
+    for key in out:
+        out.extend(r['key'] for r in rows if r['parent']==key and r['key'] not in out)
     return out
 
 
 def zotero_collections():
     """列出本地 Zotero 的分类（只读）。"""
-    resp = zotero_get("/users/0/collections")
-    cols = resp.json()
-    return [{"key": c.get("key", ""),
-             "name": (c.get("data", {}) or {}).get("name", ""),
-             "numItems": (c.get("meta", {}) or {}).get("numItems", 0)}
-            for c in cols]
+    from .zotero_link import collection_rows
+    from .zotero_client import ZoteroClient
+    return collection_rows(ZoteroClient())
 
 
 def zotero_sync(enrich=True, collection_key=None):
@@ -674,8 +719,9 @@ def zotero_sync(enrich=True, collection_key=None):
     with get_db() as conn:  # 写回阶段
         for p in collected:
             try:
-                _, created = upsert_paper(conn, p, source="zotero", status="library")
+                pid, created = upsert_paper(conn, p, source="zotero", status="library")
                 stats["added" if created else "updated"] += 1
+                _remember(stats,pid)
             except Exception as e:  # noqa: BLE001
                 stats["errors"].append(str(e))
     return stats

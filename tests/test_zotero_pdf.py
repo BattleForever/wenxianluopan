@@ -5,7 +5,7 @@ from unittest.mock import patch
 from urllib.parse import parse_qs
 T=tempfile.TemporaryDirectory();os.environ['PAPERNET_DATA_DIR']=T.name
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-import fitz
+import pdf_fixture as pdfgen
 from app.main import app
 from app.db import get_db
 from app.store import upsert_paper
@@ -13,7 +13,7 @@ from app import zotero_pdf as z,pdf_access
 from app.zotero_client import ZoteroClient,ZoteroError
 
 def pdf(text='Readable test original'):
- with fitz.open() as d:d.new_page().insert_text((60,60),text);return d.tobytes()
+ with pdfgen.document() as d:d.new_page().insert_text((60,60),text);return d.tobytes()
 class Fake:
  def __init__(self):self.children=[];self.creates=0;self.uploads=0;self.fail=False;self.raw=None
  def get_children(self,parent):return self.children

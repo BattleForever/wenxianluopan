@@ -4,7 +4,7 @@ from pathlib import Path
 from unittest.mock import patch,MagicMock
 T=tempfile.TemporaryDirectory();os.environ['PAPERNET_DATA_DIR']=T.name
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]))
-import fitz
+import pdf_fixture as pdfgen
 from fastapi import HTTPException
 from app.main import app
 from app import pdf_guide,pdf_access,zotero_pdf
@@ -17,7 +17,7 @@ class Attachments(unittest.TestCase):
   with get_db() as c:self.pid=upsert_paper(c,{'title':'A linked original saved by Connector','doi':self.doi},'fixture','library')[0]
   set_setting('zotero_data_dir',str(Path(T.name)/'unavailable_index'))
   self.file=Path(T.name)/(self._testMethodName+'.pdf')
-  with fitz.open() as d:d.new_page().insert_text((30,30),self.doi);d.save(self.file)
+  with pdfgen.document() as d:d.new_page().insert_text((30,30),self.doi);d.save(self.file)
   self.cli=MagicMock();self.cli.search_items.return_value=[{'key':'EMPTY','data':{'itemType':'journalArticle','DOI':self.doi}},{'key':'WITHPDF','data':{'itemType':'conferencePaper','DOI':self.doi.upper()}}]
   self.cli.get_children.side_effect=lambda key:[] if key=='EMPTY' else [{'key':'LINKED','data':{'itemType':'attachment','parentItem':'WITHPDF','contentType':'application/pdf','linkMode':'linked_file'}}]
   self.cli.attachment_file.return_value=self.file

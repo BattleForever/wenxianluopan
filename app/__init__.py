@@ -1,2 +1,2 @@
 """WenxianLuopan application version."""
-__version__ = '0.19.2'
+__version__ = '0.23.0'

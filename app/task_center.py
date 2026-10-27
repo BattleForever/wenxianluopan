@@ -19,7 +19,7 @@ def recent_tasks(limit:int=Query(default=50,ge=1,le=500)):
     tasks=[]
     with get_db() as c:
         tables={r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        for kind,table,title in [('exploration','research_jobs','文献拓展'),('enrichment','enrichment_jobs','资料补全'),('metrics','metric_jobs','期刊指标')]:
+        for kind,table,title in [('exploration','research_jobs','文献拓展'),('enrichment','enrichment_jobs','资料补全'),('metrics','metric_jobs','期刊指标'),('import','import_jobs','文献导入')]:
             if table not in tables:continue
             for r in c.execute('SELECT payload FROM '+table):
                 j=json.loads(r[0]);active=j.get('status') in ACTIVE
@@ -27,6 +27,7 @@ def recent_tasks(limit:int=Query(default=50,ge=1,le=500)):
                 row={'id':j['id'],'kind':kind,'title':title,'status':j['status'],'active':active,'created_at':j.get('created_at',''),
                      'completed':completed,'total':total,'fields_filled':j.get('fields_filled',0),
                      'errors':len(j.get('errors',[])) if isinstance(j.get('errors'),list) else j.get('errors',0)}
+                if kind=='import':row['added']=(j.get('result') or {}).get('added',0)
                 if kind=='exploration':row.update(found=len(j.get('results',[])),processed=j.get('processed',0),fetches=j.get('fetches',0),round=j.get('round',0),depth=j.get('options',{}).get('depth',1),truncated=bool(j.get('truncated')),pending_branches=len(j.get('pending_fetch_ids',[])),retention=j.get('retention'),strategy=j.get('options',{}).get('strategy'))
                 tasks.append(row)
         if 'browser_capture_jobs' in tables:
